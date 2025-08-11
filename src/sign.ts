@@ -164,53 +164,6 @@ async function rsaVerify(data: Buffer, signature: Buffer, key: any, algorithm: s
   }
 }
 
-/**
- * Prepare payload for signing based on the specified format
- */
-function preparePayloadWithOptions(payload: Buffer | any, options?: COSEOptions): Buffer {
-  const format = options?.payloadFormat || 'auto-detect';
-  
-  switch (format) {
-    case 'raw':
-      // Always treat as raw bytes
-      return Buffer.isBuffer(payload) ? payload : Buffer.from(payload);
-      
-    case 'cbor-encoded':
-      // Always CBOR encode the payload
-      return cbor.encode(payload);
-      
-    case 'auto-detect':
-    default:
-      // Auto-detect: if it's a Tagged value or complex object, encode it
-      if (payload instanceof Tagged || 
-          (typeof payload === 'object' && !Buffer.isBuffer(payload))) {
-        return cbor.encode(payload);
-      }
-      return Buffer.isBuffer(payload) ? payload : Buffer.from(payload);
-  }
-}
-
-/**
- * Helper function to create a payload with CBOR tag(64) for typed arrays
- */
-export function createTypedArrayPayload(data: Uint8Array): InstanceType<typeof Tagged> {
-  return new Tagged(data, 64);
-}
-
-/**
- * Helper function to create a payload with raw bytes (no CBOR encoding)
- */
-export function createBytesPayload(data: Buffer): Buffer {
-  return data;
-}
-
-/**
- * Helper function to create a CBOR-encoded payload with tag(24)
- */
-export function createCborPayload(data: any): InstanceType<typeof Tagged> {
-  return new Tagged(cbor.encode(data), 24);
-}
-
 function doSign(SigStructure: any[], signer: COSESigner, alg: number): Buffer {
   if (!AlgFromTags[alg]) {
     throw new Error('Unknown algorithm, ' + alg);
@@ -343,13 +296,10 @@ export async function doSignAsync(SigStructure: any[], signer: COSESigner, alg: 
   return sig;
 }
 
-export function create(headers: COSEHeaders, payload: Buffer | any, signers: COSESigner[] | COSESigner, options?: COSEOptions): Promise<Buffer> {
+export function create(headers: COSEHeaders, payload: Buffer, signers: COSESigner[] | COSESigner, options?: COSEOptions): Promise<Buffer> {
   options = options || {};
   let u = headers.u || {};
   let p = headers.p || {};
-
-  // Prepare the payload based on the specified format
-  const processedPayload = preparePayloadWithOptions(payload, options);
 
   const pMap = common.TranslateHeaders(p);
   const uMap = common.TranslateHeaders(u);
@@ -384,7 +334,7 @@ export function create(headers: COSEHeaders, payload: Buffer | any, signers: COS
         bodyPEncoded,
         signerPEncoded,
         externalAAD,
-        processedPayload
+        payload
       ];
 
       const sig = doSign(SigStructure, signer, alg);
@@ -397,7 +347,7 @@ export function create(headers: COSEHeaders, payload: Buffer | any, signers: COS
     } else {
       encodedP = cbor.encode(pMap);
     }
-    const signed = [encodedP, uMap, processedPayload, signatures];
+    const signed = [encodedP, uMap, payload, signatures];
     return Promise.resolve(cbor.encode(options.excludetag ? signed : new Tagged(signed, SignTag)));
   } else {
     const signer = signers;
@@ -407,7 +357,7 @@ export function create(headers: COSEHeaders, payload: Buffer | any, signers: COS
       'Signature1',
       bodyPEncoded,
       externalAAD,
-      processedPayload
+      payload
     ];
     const sig = doSign(SigStructure, signer, alg);
     let encodedP: Buffer;
@@ -416,7 +366,7 @@ export function create(headers: COSEHeaders, payload: Buffer | any, signers: COS
     } else {
       encodedP = cbor.encode(pMap);
     }
-    const signed = [encodedP, uMap, processedPayload, sig];
+    const signed = [encodedP, uMap, payload, sig];
     return Promise.resolve(cbor.encode(options.excludetag ? signed : new Tagged(signed, Sign1Tag)));
   }
 }

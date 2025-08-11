@@ -16,7 +16,7 @@ export default defineConfig({
     },
     rollupOptions: {
       // Externalize deps that shouldn't be bundled into your library
-      external: ['crypto'],
+      // external: ['crypto', 'stream'],
       // make sure to externalize deps that shouldn't be bundled
       // into your library
       //   external: ['vue'],
