@@ -4,7 +4,7 @@ import * as common from './common.js';
 import { hkdf } from '@noble/hashes/hkdf';
 import { sha256 } from '@noble/hashes/sha256';
 import { sha512 } from '@noble/hashes/sha512';
-import type { COSEHeaders, COSERecipient, COSEOptions } from './types.js';
+import type { COSEHeaders, COSERecipient, COSEOptions, COSEKey } from './types.js';
 
 const Tagged = cbor.Tagged;
 
@@ -140,6 +140,28 @@ const nodeCRV: NodeCRVMap = {
   'P-256': 'prime256v1'
 };
 
+/**
+ * Check if the algorithm is an ECDH-based key agreement algorithm
+ */
+function isECDHAlgorithm(alg: string): boolean {
+  return alg === 'ECDH-ES' || alg === 'ECDH-ES-512' || alg === 'ECDH-SS' || alg === 'ECDH-SS-512';
+}
+
+/**
+ * Check if the recipient uses ECDH key agreement
+ */
+function usesECDHKeyAgreement(recipient: COSERecipient): boolean {
+  return !!(recipient.p && 
+         typeof recipient.p.alg === 'string' && 
+         isECDHAlgorithm(recipient.p.alg) &&
+         recipient.key &&
+         typeof recipient.key === 'object' &&
+         'crv' in recipient.key &&
+         'x' in recipient.key &&
+         'y' in recipient.key &&
+         'd' in recipient.key);
+}
+
 function createAAD(p: Map<number, any>, context: string, externalAAD: Buffer): Buffer {
   const pEncoded = (!p.size) ? EMPTY_BUFFER : cbor.encode(p);
   const encStructure = [
@@ -228,52 +250,51 @@ export function create(headers: COSEHeaders, payload: Buffer, recipients: COSERe
 
         let key: Buffer;
         let recipientStruct: any[][];
-        // TODO do a more accurate check
-        if (recipients[0] && recipients[0].p &&
-          (recipients[0].p.alg === 'ECDH-ES' ||
-            recipients[0].p.alg === 'ECDH-ES-512' ||
-            recipients[0].p.alg === 'ECDH-SS' ||
-            recipients[0].p.alg === 'ECDH-SS-512')) {
-          const recipient = crypto.createECDH(nodeCRV[(recipients[0].key as any).crv]);
-          const generated = crypto.createECDH(nodeCRV[(recipients[0].key as any).crv]);
-          recipient.setPrivateKey((recipients[0].key as any).d);
-          let pk = randomSource(keyLength[(recipients[0].key as any).crv]);
-          if (recipients[0].p.alg === 'ECDH-ES' ||
-            recipients[0].p.alg === 'ECDH-ES-512') {
-            pk = randomSource(keyLength[(recipients[0].key as any).crv]);
-            pk[0] = ((recipients[0].key as any).crv !== 'P-521' || pk[0] === 1) ? pk[0] : 0;
+        
+        if (usesECDHKeyAgreement(recipients[0])) {
+          const recipientKey = recipients[0].key as COSEKey;
+          const recipientAlg = recipients[0].p!.alg as string;
+          
+          const recipient = crypto.createECDH(nodeCRV[recipientKey.crv!]);
+          const generated = crypto.createECDH(nodeCRV[recipientKey.crv!]);
+          recipient.setPrivateKey(recipientKey.d!);
+          let pk = randomSource(keyLength[recipientKey.crv!]);
+          if (recipientAlg === 'ECDH-ES' || recipientAlg === 'ECDH-ES-512') {
+            pk = randomSource(keyLength[recipientKey.crv!]);
+            pk[0] = (recipientKey.crv !== 'P-521' || pk[0] === 1) ? pk[0] : 0;
           } else {
-            pk = (recipients[0].sender as any).d;
+            pk = recipients[0].sender!.d!;
           }
 
           generated.setPrivateKey(pk);
           const senderPublicKey = generated.getPublicKey();
           const recipientPublicKey = Buffer.concat([
             Buffer.from('04', 'hex'),
-            (recipients[0].key as any).x,
-            (recipients[0].key as any).y
+            recipientKey.x!,
+            recipientKey.y!
           ]);
 
           const generatedKey = common.TranslateKey({
-            crv: (recipients[0].key as any).crv,
-            x: senderPublicKey.slice(1, keyLength[(recipients[0].key as any).crv] + 1), // TODO slice based on key length
-            y: senderPublicKey.slice(keyLength[(recipients[0].key as any).crv] + 1),
-            kty: 'EC2' // TODO use real value
+            crv: recipientKey.crv!,
+            x: senderPublicKey.slice(1, keyLength[recipientKey.crv!] + 1),
+            y: senderPublicKey.slice(keyLength[recipientKey.crv!] + 1, keyLength[recipientKey.crv!] * 2 + 1),
+            kty: 'EC2'
           });
-          const rp = cbor.encode(common.TranslateHeaders(recipients[0].p));
+          const rp = cbor.encode(common.TranslateHeaders(recipients[0].p!));
           const ikm = generated.computeSecret(recipientPublicKey);
           let partyUNonce: Buffer | null = null;
-          if (recipients[0].p.alg === 'ECDH-SS' || recipients[0].p.alg === 'ECDH-SS-512') {
-            partyUNonce = randomSource(64); // TODO use real value
+          if (recipientAlg === 'ECDH-SS' || recipientAlg === 'ECDH-SS-512') {
+            // Generate a random nonce for Static-Static key agreement
+            // Using 32 bytes (256 bits) which provides sufficient entropy
+            partyUNonce = randomSource(32);
           }
           const context = createContext(rp, alg, partyUNonce);
           const nrBytes = keyLength[alg];
-          const hashFn = HKDFAlg[recipients[0].p.alg];
+          const hashFn = HKDFAlg[recipientAlg];
           key = Buffer.from(hkdf(hashFn, new Uint8Array(ikm), undefined, new Uint8Array(context), nrBytes));
           let ru = recipients[0].u || {};
 
-          if (recipients[0].p.alg === 'ECDH-ES' ||
-            recipients[0].p.alg === 'ECDH-ES-512') {
+          if (recipientAlg === 'ECDH-ES' || recipientAlg === 'ECDH-ES-512') {
             ru.ephemeral_key = generatedKey;
           } else {
             ru.static_key = generatedKey;

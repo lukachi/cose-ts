@@ -1,4 +1,5 @@
 import * as cbor from 'cbor';
+// @ts-ignore
 import { create as createMac } from 'aes-cbc-mac';
 import * as crypto from 'crypto';
 import * as common from './common.js';
