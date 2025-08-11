@@ -8,6 +8,7 @@ import { p384 } from '@noble/curves/p384';
 import { p521 } from '@noble/curves/p521';
 import { sha256 } from '@noble/hashes/sha256';
 import { sha384, sha512 } from '@noble/hashes/sha512';
+import * as jsrsasign from 'jsrsasign';
 import * as common from './common.js';
 import type { COSEHeaders, COSESigner, COSEVerifier, COSEOptions, AlgorithmInfo, NodeAlgorithm } from './types.js';
 
@@ -76,85 +77,97 @@ function getCurve(curveName: string) {
   }
 }
 
-// Helper function for RSA signing (fallback to Web Crypto API if available)
+// Helper function for RSA signing using jsrsasign
 async function rsaSign(data: Buffer, key: any, algorithm: string): Promise<Buffer> {
-  if (typeof crypto !== 'undefined' && crypto.subtle) {
-    // Use Web Crypto API for RSA operations in browser environments
-    try {
-      const keyData = {
-        kty: 'RSA',
-        n: key.n.toString('base64url'),
-        e: key.e.toString('base64url'),
-        d: key.d.toString('base64url'),
-        p: key.p.toString('base64url'),
-        q: key.q.toString('base64url'),
-        dp: key.dp.toString('base64url'),
-        dq: key.dq.toString('base64url'),
-        qi: key.qi.toString('base64url'),
-      };
-      
-      const cryptoKey = await crypto.subtle.importKey(
-        'jwk',
-        keyData,
-        {
-          name: algorithm.startsWith('PSS') ? 'RSA-PSS' : 'RSASSA-PKCS1-v1_5',
-          hash: algorithm.includes('256') ? 'SHA-256' : algorithm.includes('384') ? 'SHA-384' : 'SHA-512',
-        },
-        false,
-        ['sign']
-      );
-      
-      const signature = await crypto.subtle.sign(
-        algorithm.startsWith('PSS') 
-          ? { name: 'RSA-PSS', saltLength: algorithm.includes('256') ? 32 : algorithm.includes('384') ? 48 : 64 }
-          : { name: 'RSASSA-PKCS1-v1_5' },
-        cryptoKey,
-        new Uint8Array(data)
-      );
-      
-      return Buffer.from(signature);
-    } catch (error) {
-      throw new Error(`RSA signing failed: ${error}`);
+  try {
+    // Convert COSE key format to JWK format for jsrsasign
+    const jwkKey = {
+      kty: 'RSA',
+      n: key.n.toString('base64url'),
+      e: key.e.toString('base64url'),
+      d: key.d.toString('base64url'),
+      p: key.p?.toString('base64url'),
+      q: key.q?.toString('base64url'),
+      dp: key.dp?.toString('base64url'),
+      dq: key.dq?.toString('base64url'),
+      qi: key.qi?.toString('base64url'),
+    };
+
+    // Create RSA private key object
+    const rsaKey = jsrsasign.KEYUTIL.getKey(jwkKey);
+    
+    // Determine the hash algorithm
+    let hashAlg: string;
+    if (algorithm.includes('256')) {
+      hashAlg = 'SHA256';
+    } else if (algorithm.includes('384')) {
+      hashAlg = 'SHA384';
+    } else if (algorithm.includes('512')) {
+      hashAlg = 'SHA512';
+    } else {
+      throw new Error(`Unsupported hash algorithm in ${algorithm}`);
     }
-  } else {
-    throw new Error('RSA operations require Web Crypto API support in browser environments');
+
+    // Create signature object
+    let sig: jsrsasign.KJUR.crypto.Signature;
+    if (algorithm.startsWith('PS')) {
+      // PSS signature
+      sig = new jsrsasign.KJUR.crypto.Signature({ alg: `${hashAlg}withRSAandMGF1` });
+    } else {
+      // PKCS#1 v1.5 signature
+      sig = new jsrsasign.KJUR.crypto.Signature({ alg: `${hashAlg}withRSA` });
+    }
+
+    sig.init(rsaKey);
+    sig.updateHex(data.toString('hex'));
+    const signature = sig.sign();
+    
+    return Buffer.from(signature, 'hex');
+  } catch (error) {
+    throw new Error(`RSA signing failed: ${error}`);
   }
 }
 
-// Helper function for RSA verification
+// Helper function for RSA verification using jsrsasign
 async function rsaVerify(data: Buffer, signature: Buffer, key: any, algorithm: string): Promise<boolean> {
-  if (typeof crypto !== 'undefined' && crypto.subtle) {
-    try {
-      const keyData = {
-        kty: 'RSA',
-        n: key.n.toString('base64url'),
-        e: key.e.toString('base64url'),
-      };
-      
-      const cryptoKey = await crypto.subtle.importKey(
-        'jwk',
-        keyData,
-        {
-          name: algorithm.startsWith('PSS') ? 'RSA-PSS' : 'RSASSA-PKCS1-v1_5',
-          hash: algorithm.includes('256') ? 'SHA-256' : algorithm.includes('384') ? 'SHA-384' : 'SHA-512',
-        },
-        false,
-        ['verify']
-      );
-      
-      return await crypto.subtle.verify(
-        algorithm.startsWith('PSS') 
-          ? { name: 'RSA-PSS', saltLength: algorithm.includes('256') ? 32 : algorithm.includes('384') ? 48 : 64 }
-          : { name: 'RSASSA-PKCS1-v1_5' },
-        cryptoKey,
-        new Uint8Array(signature),
-        new Uint8Array(data)
-      );
-    } catch (error) {
-      return false;
+  try {
+    // Convert COSE key format to JWK format for jsrsasign
+    const jwkKey = {
+      kty: 'RSA',
+      n: key.n.toString('base64url'),
+      e: key.e.toString('base64url'),
+    };
+
+    // Create RSA public key object
+    const rsaKey = jsrsasign.KEYUTIL.getKey(jwkKey);
+    
+    // Determine the hash algorithm
+    let hashAlg: string;
+    if (algorithm.includes('256')) {
+      hashAlg = 'SHA256';
+    } else if (algorithm.includes('384')) {
+      hashAlg = 'SHA384';
+    } else if (algorithm.includes('512')) {
+      hashAlg = 'SHA512';
+    } else {
+      throw new Error(`Unsupported hash algorithm in ${algorithm}`);
     }
-  } else {
-    throw new Error('RSA operations require Web Crypto API support in browser environments');
+
+    // Create signature verification object
+    let sig: jsrsasign.KJUR.crypto.Signature;
+    if (algorithm.startsWith('PS')) {
+      // PSS verification
+      sig = new jsrsasign.KJUR.crypto.Signature({ alg: `${hashAlg}withRSAandMGF1` });
+    } else {
+      // PKCS#1 v1.5 verification
+      sig = new jsrsasign.KJUR.crypto.Signature({ alg: `${hashAlg}withRSA` });
+    }
+
+    sig.init(rsaKey);
+    sig.updateHex(data.toString('hex'));
+    return sig.verify(signature.toString('hex'));
+  } catch (error) {
+    return false;
   }
 }
 
@@ -191,8 +204,56 @@ function doSign(SigStructure: any[], signer: COSESigner, alg: number): Buffer {
       Buffer.from(s, 'hex')
     ]);
   } else if (AlgFromTags[alg].sign.startsWith('PS') || AlgFromTags[alg].sign.startsWith('RS')) {
-    // Use Web Crypto API for RSA operations
-    throw new Error('RSA operations require async support. Use createAsync instead.');
+    // Use jsrsasign for RSA operations - now works synchronously
+    const algInfo = COSEAlgToNobleAlg[AlgFromTags[alg].sign];
+    try {
+      // Convert COSE key format to JWK format for jsrsasign
+      const jwkKey = {
+        kty: 'RSA',
+        n: signer.key.n!.toString('base64url'),
+        e: signer.key.e!.toString('base64url'),
+        d: signer.key.d!.toString('base64url'),
+        p: signer.key.p?.toString('base64url'),
+        q: signer.key.q?.toString('base64url'),
+        dp: signer.key.dp?.toString('base64url'),
+        dq: signer.key.dq?.toString('base64url'),
+        qi: signer.key.qi?.toString('base64url'),
+      };
+
+      // Create RSA private key object
+      const rsaKey = jsrsasign.KEYUTIL.getKey(jwkKey);
+      
+      // Determine the hash algorithm
+      let hashAlg: string;
+      const algorithm = algInfo.alg || algInfo.sign!;
+      if (algorithm.includes('256')) {
+        hashAlg = 'SHA256';
+      } else if (algorithm.includes('384')) {
+        hashAlg = 'SHA384';
+      } else if (algorithm.includes('512')) {
+        hashAlg = 'SHA512';
+      } else {
+        throw new Error(`Unsupported hash algorithm in ${algorithm}`);
+      }
+
+      // Create signature object
+      let signatureObj: jsrsasign.KJUR.crypto.Signature;
+      if (algorithm.startsWith('PS')) {
+        // PSS signature
+        signatureObj = new jsrsasign.KJUR.crypto.Signature({ alg: `${hashAlg}withRSAandMGF1` });
+      } else {
+        // PKCS#1 v1.5 signature
+        signatureObj = new jsrsasign.KJUR.crypto.Signature({ alg: `${hashAlg}withRSA` });
+      }
+
+      signatureObj.init(rsaKey);
+      signatureObj.updateHex(ToBeSigned.toString('hex'));
+      const signature = signatureObj.sign();
+      
+      sig = Buffer.from(signature, 'hex');
+    } catch (error) {
+      throw new Error(`RSA signing failed: ${error}`);
+    }
   } else {
     throw new Error('Unsupported algorithm: ' + AlgFromTags[alg].sign);
   }
@@ -233,7 +294,7 @@ export async function doSignAsync(SigStructure: any[], signer: COSESigner, alg: 
       Buffer.from(s, 'hex')
     ]);
   } else if (AlgFromTags[alg].sign.startsWith('PS') || AlgFromTags[alg].sign.startsWith('RS')) {
-    // Use Web Crypto API for RSA operations
+    // Use jsrsasign for RSA operations
     const algInfo = COSEAlgToNobleAlg[AlgFromTags[alg].sign];
     sig = await rsaSign(ToBeSigned, signer.key, algInfo.alg || algInfo.sign!);
   } else {
@@ -349,8 +410,51 @@ function doVerify(SigStructure: any[], verifier: COSEVerifier, alg: number, sig:
       throw new Error('Signature mismatch');
     }
   } else if (AlgFromTags[alg].sign.startsWith('PS') || AlgFromTags[alg].sign.startsWith('RS')) {
-    // RSA verification requires async support
-    throw new Error('RSA operations require async support. Use verifyAsync instead.');
+    // Use jsrsasign for RSA verification - now works synchronously
+    try {
+      // Convert COSE key format to JWK format for jsrsasign
+      const jwkKey = {
+        kty: 'RSA',
+        n: verifier.key.n!.toString('base64url'),
+        e: verifier.key.e!.toString('base64url'),
+      };
+
+      // Create RSA public key object
+      const rsaKey = jsrsasign.KEYUTIL.getKey(jwkKey);
+      
+      // Determine the hash algorithm
+      let hashAlg: string;
+      const algorithm = nobleAlg.alg || nobleAlg.sign!;
+      if (algorithm.includes('256')) {
+        hashAlg = 'SHA256';
+      } else if (algorithm.includes('384')) {
+        hashAlg = 'SHA384';
+      } else if (algorithm.includes('512')) {
+        hashAlg = 'SHA512';
+      } else {
+        throw new Error(`Unsupported hash algorithm in ${algorithm}`);
+      }
+
+      // Create signature verification object
+      let signatureObj: jsrsasign.KJUR.crypto.Signature;
+      if (algorithm.startsWith('PS')) {
+        // PSS verification
+        signatureObj = new jsrsasign.KJUR.crypto.Signature({ alg: `${hashAlg}withRSAandMGF1` });
+      } else {
+        // PKCS#1 v1.5 verification
+        signatureObj = new jsrsasign.KJUR.crypto.Signature({ alg: `${hashAlg}withRSA` });
+      }
+
+      signatureObj.init(rsaKey);
+      signatureObj.updateHex(ToBeSigned.toString('hex'));
+      const isValid = signatureObj.verify(sig.toString('hex'));
+      
+      if (!isValid) {
+        throw new Error('Signature mismatch');
+      }
+    } catch (error) {
+      throw new Error(`RSA verification failed: ${error}`);
+    }
   } else {
     throw new Error('Unsupported algorithm: ' + AlgFromTags[alg].sign);
   }
@@ -390,7 +494,7 @@ export async function doVerifyAsync(SigStructure: any[], verifier: COSEVerifier,
       throw new Error('Signature mismatch');
     }
   } else if (AlgFromTags[alg].sign.startsWith('PS') || AlgFromTags[alg].sign.startsWith('RS')) {
-    // Use Web Crypto API for RSA verification
+    // Use jsrsasign for RSA verification
     const isValid = await rsaVerify(ToBeSigned, sig, verifier.key, nobleAlg.alg || nobleAlg.sign!);
     if (!isValid) {
       throw new Error('Signature mismatch');

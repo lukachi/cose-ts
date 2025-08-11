@@ -4,6 +4,7 @@ import type { COSEHeaders, COSESigner, COSEVerifier, COSEOptions } from '../src/
 import { p256 } from '@noble/curves/p256';
 import { p384 } from '@noble/curves/p384';
 import { p521 } from '@noble/curves/p521';
+import * as jsrsasign from 'jsrsasign';
 
 describe('COSE Sign Module', () => {
   // Test key pairs for different curves
@@ -22,11 +23,21 @@ describe('COSE Sign Module', () => {
     }
   };
 
+  // RSA test key pair
+  let rsaKeyPair: { private: any; public: any } = { private: null, public: null };
+
   // Generate public keys from private keys
   beforeEach(() => {
     testKeys.p256.public = p256.getPublicKey(testKeys.p256.private, false); // false = uncompressed
     testKeys.p384.public = p384.getPublicKey(testKeys.p384.private, false); // false = uncompressed
     testKeys.p521.public = p521.getPublicKey(testKeys.p521.private, false); // false = uncompressed
+    
+    // Generate RSA key pair for testing
+    if (!rsaKeyPair.private) {
+      const keyPair = jsrsasign.KEYUTIL.generateKeypair('RSA', 2048);
+      rsaKeyPair.private = keyPair.prvKeyObj;
+      rsaKeyPair.public = keyPair.pubKeyObj;
+    }
   });
 
   describe('ECDSA Signing and Verification', () => {
@@ -154,7 +165,7 @@ describe('COSE Sign Module', () => {
       expect(verifiedPayload).toEqual(payload);
     });
 
-    it.skip('should handle multiple signers (Sign)', async () => {
+    it('should handle multiple signers (Sign)', async () => {
       const payload = Buffer.from('Hello, Multi-signer COSE!');
       
       const pubKeyUncompressed = testKeys.p256.public;
@@ -200,7 +211,7 @@ describe('COSE Sign Module', () => {
   });
 
   describe('Error Handling', () => {
-    it('should throw error for unknown algorithm', async () => {
+    it('should throw error for unknown algorithm', () => {
       const payload = Buffer.from('Test payload');
       const pubKeyUncompressed = testKeys.p256.public;
       const x = Buffer.from(pubKeyUncompressed.slice(1, 33));
@@ -221,10 +232,10 @@ describe('COSE Sign Module', () => {
         }
       };
 
-      await expect(sign.create(headers, payload, signer)).rejects.toThrow('Unknown \'alg\' parameter, UNKNOWN_ALG');
+      expect(() => sign.create(headers, payload, signer)).toThrow('Unknown \'alg\' parameter, UNKNOWN_ALG');
     });
 
-    it('should throw error for missing algorithm', async () => {
+    it('should throw error for missing algorithm', () => {
       const payload = Buffer.from('Test payload');
       const pubKeyUncompressed = testKeys.p256.public;
       const x = Buffer.from(pubKeyUncompressed.slice(1, 33));
@@ -245,17 +256,17 @@ describe('COSE Sign Module', () => {
         }
       };
 
-      await expect(sign.create(headers, payload, signer)).rejects.toThrow('Unknown algorithm, undefined');
+      expect(() => sign.create(headers, payload, signer)).toThrow('Unknown algorithm, undefined');
     });
 
-    it('should throw error for empty signers array', async () => {
+    it('should throw error for empty signers array', () => {
       const payload = Buffer.from('Test payload');
       const headers: COSEHeaders = {
         p: { alg: 'ES256' },
         u: {}
       };
 
-      await expect(sign.create(headers, payload, [])).rejects.toThrow('There has to be at least one signer');
+      expect(() => sign.create(headers, payload, [])).toThrow('There has to be at least one signer');
     });
 
     it('should throw error for invalid signature during verification', () => {
@@ -281,44 +292,174 @@ describe('COSE Sign Module', () => {
   });
 
   describe('RSA Support', () => {
-    it('should throw error for RSA algorithms in sync mode', async () => {
-      const payload = Buffer.from('Test RSA payload');
+    it('should create and verify RS256 signature', async () => {
+      const payload = Buffer.from('Test RSA RS256 payload');
       const headers: COSEHeaders = {
         p: { alg: 'RS256' },
         u: {}
       };
 
-      // Mock RSA key
+      // Convert jsrsasign RSA key to COSE format
+      const privateJwk = jsrsasign.KEYUTIL.getJWKFromKey(rsaKeyPair.private) as any;
+      const publicJwk = jsrsasign.KEYUTIL.getJWKFromKey(rsaKeyPair.public) as any;
+
       const signer: COSESigner = {
         key: {
           kty: 'RSA',
-          n: Buffer.alloc(256),
-          e: Buffer.from([0x01, 0x00, 0x01]),
-          d: Buffer.alloc(256)
+          n: Buffer.from(privateJwk.n!, 'base64url'),
+          e: Buffer.from(privateJwk.e!, 'base64url'),
+          d: Buffer.from(privateJwk.d!, 'base64url'),
+          p: Buffer.from(privateJwk.p!, 'base64url'),
+          q: Buffer.from(privateJwk.q!, 'base64url'),
+          dp: Buffer.from(privateJwk.dp!, 'base64url'),
+          dq: Buffer.from(privateJwk.dq!, 'base64url'),
+          qi: Buffer.from(privateJwk.qi!, 'base64url')
         }
       };
 
-      await expect(sign.create(headers, payload, signer)).rejects.toThrow('RSA operations require async support. Use createAsync instead.');
+      const verifier: COSEVerifier = {
+        key: {
+          kty: 'RSA',
+          n: Buffer.from(publicJwk.n!, 'base64url'),
+          e: Buffer.from(publicJwk.e!, 'base64url')
+        }
+      };
+
+      // Create signature
+      const signedData = await sign.create(headers, payload, signer);
+      expect(signedData).toBeInstanceOf(Buffer);
+      expect(signedData.length).toBeGreaterThan(0);
+
+      // Verify signature
+      const verifiedPayload = sign.verifySync(signedData, verifier);
+      expect(verifiedPayload).toEqual(payload);
     });
 
-    it('should throw error for PSS algorithms in sync mode', async () => {
-      const payload = Buffer.from('Test PSS payload');
+    it('should create and verify PS256 signature', async () => {
+      const payload = Buffer.from('Test PSS PS256 payload');
       const headers: COSEHeaders = {
         p: { alg: 'PS256' },
         u: {}
       };
 
-      // Mock RSA key
+      // Convert jsrsasign RSA key to COSE format
+      const privateJwk = jsrsasign.KEYUTIL.getJWKFromKey(rsaKeyPair.private) as any;
+      const publicJwk = jsrsasign.KEYUTIL.getJWKFromKey(rsaKeyPair.public) as any;
+
       const signer: COSESigner = {
         key: {
           kty: 'RSA',
-          n: Buffer.alloc(256),
-          e: Buffer.from([0x01, 0x00, 0x01]),
-          d: Buffer.alloc(256)
+          n: Buffer.from(privateJwk.n!, 'base64url'),
+          e: Buffer.from(privateJwk.e!, 'base64url'),
+          d: Buffer.from(privateJwk.d!, 'base64url'),
+          p: Buffer.from(privateJwk.p!, 'base64url'),
+          q: Buffer.from(privateJwk.q!, 'base64url'),
+          dp: Buffer.from(privateJwk.dp!, 'base64url'),
+          dq: Buffer.from(privateJwk.dq!, 'base64url'),
+          qi: Buffer.from(privateJwk.qi!, 'base64url')
         }
       };
 
-      await expect(sign.create(headers, payload, signer)).rejects.toThrow('RSA operations require async support. Use createAsync instead.');
+      const verifier: COSEVerifier = {
+        key: {
+          kty: 'RSA',
+          n: Buffer.from(publicJwk.n!, 'base64url'),
+          e: Buffer.from(publicJwk.e!, 'base64url')
+        }
+      };
+
+      // Create signature
+      const signedData = await sign.create(headers, payload, signer);
+      expect(signedData).toBeInstanceOf(Buffer);
+      expect(signedData.length).toBeGreaterThan(0);
+
+      // Verify signature
+      const verifiedPayload = sign.verifySync(signedData, verifier);
+      expect(verifiedPayload).toEqual(payload);
+    });
+
+    it('should create and verify RS384 signature', async () => {
+      const payload = Buffer.from('Test RS384 payload');
+      const headers: COSEHeaders = {
+        p: { alg: 'RS384' },
+        u: {}
+      };
+
+      // Convert jsrsasign RSA key to COSE format
+      const privateJwk = jsrsasign.KEYUTIL.getJWKFromKey(rsaKeyPair.private) as any;
+      const publicJwk = jsrsasign.KEYUTIL.getJWKFromKey(rsaKeyPair.public) as any;
+
+      const signer: COSESigner = {
+        key: {
+          kty: 'RSA',
+          n: Buffer.from(privateJwk.n!, 'base64url'),
+          e: Buffer.from(privateJwk.e!, 'base64url'),
+          d: Buffer.from(privateJwk.d!, 'base64url'),
+          p: Buffer.from(privateJwk.p!, 'base64url'),
+          q: Buffer.from(privateJwk.q!, 'base64url'),
+          dp: Buffer.from(privateJwk.dp!, 'base64url'),
+          dq: Buffer.from(privateJwk.dq!, 'base64url'),
+          qi: Buffer.from(privateJwk.qi!, 'base64url')
+        }
+      };
+
+      const verifier: COSEVerifier = {
+        key: {
+          kty: 'RSA',
+          n: Buffer.from(publicJwk.n!, 'base64url'),
+          e: Buffer.from(publicJwk.e!, 'base64url')
+        }
+      };
+
+      // Create signature
+      const signedData = await sign.create(headers, payload, signer);
+      expect(signedData).toBeInstanceOf(Buffer);
+      expect(signedData.length).toBeGreaterThan(0);
+
+      // Verify signature
+      const verifiedPayload = sign.verifySync(signedData, verifier);
+      expect(verifiedPayload).toEqual(payload);
+    });
+
+    it('should work with async functions for RSA', async () => {
+      const payload = Buffer.from('Test async RSA payload');
+      const headers: COSEHeaders = {
+        p: { alg: 'RS384' },
+        u: {}
+      };
+
+      const privateJwk = jsrsasign.KEYUTIL.getJWKFromKey(rsaKeyPair.private) as any;
+      const publicJwk = jsrsasign.KEYUTIL.getJWKFromKey(rsaKeyPair.public) as any;
+
+      const signer: COSESigner = {
+        key: {
+          kty: 'RSA',
+          n: Buffer.from(privateJwk.n!, 'base64url'),
+          e: Buffer.from(privateJwk.e!, 'base64url'),
+          d: Buffer.from(privateJwk.d!, 'base64url'),
+          p: Buffer.from(privateJwk.p!, 'base64url'),
+          q: Buffer.from(privateJwk.q!, 'base64url'),
+          dp: Buffer.from(privateJwk.dp!, 'base64url'),
+          dq: Buffer.from(privateJwk.dq!, 'base64url'),
+          qi: Buffer.from(privateJwk.qi!, 'base64url')
+        }
+      };
+
+      const verifier: COSEVerifier = {
+        key: {
+          kty: 'RSA',
+          n: Buffer.from(publicJwk.n!, 'base64url'),
+          e: Buffer.from(publicJwk.e!, 'base64url')
+        }
+      };
+
+      // Create signature
+      const signedData = await sign.create(headers, payload, signer);
+      expect(signedData).toBeInstanceOf(Buffer);
+
+      // Verify signature using async method
+      const verifiedPayload = await sign.verify(signedData, verifier);
+      expect(verifiedPayload).toEqual(payload);
     });
   });
 

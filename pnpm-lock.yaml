@@ -32,6 +32,9 @@ importers:
       elliptic:
         specifier: ^6.4.0
         version: 6.6.1
+      jsrsasign:
+        specifier: ^11.1.0
+        version: 11.1.0
       node-hkdf-sync:
         specifier: ^1.0.0
         version: 1.0.0
@@ -48,6 +51,9 @@ importers:
       '@types/cose-js':
         specifier: ^0.8.3
         version: 0.8.3
+      '@types/jsrsasign':
+        specifier: ^10.5.15
+        version: 10.5.15
       '@types/node':
         specifier: ^24.0.14
         version: 24.2.1
@@ -440,6 +446,9 @@ packages:
 
   '@types/estree@1.0.8':
     resolution: {integrity: sha512-dWHzHa2WqEXI/O1E9OjrocMTKJl2mSrEolh1Iomrv6U+JuNwaHXsXx9bLu5gG7BUWFIN0skIQJQ/L1rIex4X6w==}
+
+  '@types/jsrsasign@10.5.15':
+    resolution: {integrity: sha512-3stUTaSRtN09PPzVWR6aySD9gNnuymz+WviNHoTb85dKu+BjaV4uBbWWGykBBJkfwPtcNZVfTn2lbX00U+yhpQ==}
 
   '@types/node@24.2.1':
     resolution: {integrity: sha512-DRh5K+ka5eJic8CjH7td8QpYEV6Zo10gfRkjHCO3weqZHWDtAaSTFtl4+VMqOJ4N5jcuhZ9/l+yy8rVgw7BQeQ==}
@@ -861,6 +870,9 @@ packages:
     peerDependenciesMeta:
       canvas:
         optional: true
+
+  jsrsasign@11.1.0:
+    resolution: {integrity: sha512-Ov74K9GihaK9/9WncTe1mPmvrO7Py665TUfUKvraXBpu+xcTWitrtuOwcjf4KMU9maPaYn0OuaWy0HOzy/GBXg==}
 
   locate-path@6.0.0:
     resolution: {integrity: sha512-iPZK6eYjbxRu3uB4/WZ3EsEIMJFMqAoopl3R+zuq0UjcAm/MO6KCweDgPfP3elTztoKP3KtnVHxTn2NHBSDVUw==}
@@ -1599,6 +1611,8 @@ snapshots:
 
   '@types/estree@1.0.8': {}
 
+  '@types/jsrsasign@10.5.15': {}
+
   '@types/node@24.2.1':
     dependencies:
       undici-types: 7.10.0
@@ -2145,6 +2159,8 @@ snapshots:
       - bufferutil
       - supports-color
       - utf-8-validate
+
+  jsrsasign@11.1.0: {}
 
   locate-path@6.0.0:
     dependencies:
