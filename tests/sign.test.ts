@@ -208,6 +208,83 @@ describe('COSE Sign Module', () => {
       const verifiedPayload = sign.verifySync(signedData, verifier);
       expect(verifiedPayload).toEqual(payload);
     });
+
+    it('should handle truly multiple signers (Sign)', async () => {
+      const payload = Buffer.from('Hello, Multi-signer COSE with multiple keys!');
+      
+      // First signer with P-256
+      const pubKeyUncompressed1 = testKeys.p256.public;
+      const x1 = Buffer.from(pubKeyUncompressed1.slice(1, 33));
+      const y1 = Buffer.from(pubKeyUncompressed1.slice(33, 65));
+      
+      // Second signer with P-384
+      const pubKeyUncompressed2 = testKeys.p384.public;
+      const x2 = Buffer.from(pubKeyUncompressed2.slice(1, 49));
+      const y2 = Buffer.from(pubKeyUncompressed2.slice(49, 97));
+      
+      const headers: COSEHeaders = {
+        p: {},
+        u: {}
+      };
+
+      const signer1: COSESigner = {
+        key: {
+          kty: 'EC2',
+          crv: 'P-256',
+          x: x1,
+          y: y1,
+          d: Buffer.from(testKeys.p256.private),
+          kid: 'signer-1'
+        },
+        p: { alg: 'ES256' },
+        u: {}
+      };
+
+      const signer2: COSESigner = {
+        key: {
+          kty: 'EC2',
+          crv: 'P-384',
+          x: x2,
+          y: y2,
+          d: Buffer.from(testKeys.p384.private),
+          kid: 'signer-2'
+        },
+        p: { alg: 'ES384' },
+        u: {}
+      };
+
+      // Create signature with array of multiple signers
+      const signedData = await sign.create(headers, payload, [signer1, signer2]);
+      expect(signedData).toBeInstanceOf(Buffer);
+
+      // Verify signature with first signer
+      const verifier1: COSEVerifier = {
+        key: {
+          kty: 'EC2',
+          crv: 'P-256',
+          x: x1,
+          y: y1,
+          kid: 'signer-1'
+        }
+      };
+      
+      const verifiedPayload1 = sign.verifySync(signedData, verifier1);
+      expect(verifiedPayload1).toEqual(payload);
+
+      // Verify signature with second signer
+      const verifier2: COSEVerifier = {
+        key: {
+          kty: 'EC2',
+          crv: 'P-384',
+          x: x2,
+          y: y2,
+          kid: 'signer-2'
+        }
+      };
+      
+      const verifiedPayload2 = sign.verifySync(signedData, verifier2);
+      expect(verifiedPayload2).toEqual(payload);
+    });
   });
 
   describe('Error Handling', () => {

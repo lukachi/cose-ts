@@ -317,36 +317,44 @@ export function create(headers: COSEHeaders, payload: Buffer, signers: COSESigne
     if (signers.length === 0) {
       throw new Error('There has to be at least one signer');
     }
-    if (signers.length > 1) {
-      throw new Error('Only one signer is supported');
+    
+    // Handle multiple signers
+    const signatures: any[] = [];
+    
+    for (const signer of signers) {
+      const externalAAD = signer.externalAAD || EMPTY_BUFFER;
+      let signerP = signer.p || {};
+      let signerU = signer.u || {};
+
+      // Add kid to signer headers if it exists in the key
+      if (signer.key.kid && !signerP.kid && !signerU.kid) {
+        signerU.kid = signer.key.kid;
+      }
+
+      const signerPMap = common.TranslateHeaders(signerP);
+      const signerUMap = common.TranslateHeaders(signerU);
+      const alg = signerPMap.get(common.HeaderParameters.alg);
+      const signerPEncoded = (signerPMap.size === 0) ? EMPTY_BUFFER : cbor.encode(signerPMap);
+
+      const SigStructure = [
+        'Signature',
+        bodyPEncoded,
+        signerPEncoded,
+        externalAAD,
+        payload
+      ];
+
+      const sig = doSign(SigStructure, signer, alg);
+      signatures.push([signerPEncoded, signerUMap, sig]);
     }
-    // TODO handle multiple signers
-    const signer = signers[0];
-    const externalAAD = signer.externalAAD || EMPTY_BUFFER;
-    let signerP = signer.p || {};
-    let signerU = signer.u || {};
-
-    const signerPMap = common.TranslateHeaders(signerP);
-    const signerUMap = common.TranslateHeaders(signerU);
-    const alg = signerPMap.get(common.HeaderParameters.alg);
-    const signerPEncoded = (signerPMap.size === 0) ? EMPTY_BUFFER : cbor.encode(signerPMap);
-
-    const SigStructure = [
-      'Signature',
-      bodyPEncoded,
-      signerPEncoded,
-      externalAAD,
-      payload
-    ];
-
-    const sig = doSign(SigStructure, signer, alg);
+    
     let encodedP: Buffer;
     if (pMap.size === 0 && options.encodep === 'empty') {
       encodedP = EMPTY_BUFFER;
     } else {
       encodedP = cbor.encode(pMap);
     }
-    const signed = [encodedP, uMap, payload, [[signerPEncoded, signerUMap, sig]]];
+    const signed = [encodedP, uMap, payload, signatures];
     return cbor.encodeAsync(options.excludetag ? signed : new Tagged(SignTag, signed));
   } else {
     const signer = signers;
@@ -506,9 +514,30 @@ export async function doVerifyAsync(SigStructure: any[], verifier: COSEVerifier,
 
 function getSigner(signers: any[][], verifier: COSEVerifier): any[] | undefined {
   for (let i = 0; i < signers.length; i++) {
-    const kid = signers[i][1].get(common.HeaderParameters.kid); // TODO create constant for header locations
-    if (kid.equals(Buffer.from(verifier.key.kid!, 'utf8'))) {
-      return signers[i];
+    const signerHeaders = signers[i][1];
+    // Check if signerHeaders is a Map or needs to be decoded
+    let headerMap = signerHeaders;
+    if (!(signerHeaders instanceof Map)) {
+      // If it's not a Map, try to treat it as an object and convert
+      if (typeof signerHeaders === 'object' && signerHeaders !== null) {
+        headerMap = new Map();
+        if (signerHeaders.kid !== undefined) {
+          headerMap.set(common.HeaderParameters.kid, signerHeaders.kid);
+        }
+      }
+    }
+    
+    if (headerMap instanceof Map && headerMap.has && headerMap.has(common.HeaderParameters.kid)) {
+      const kid = headerMap.get(common.HeaderParameters.kid);
+      if (kid && Buffer.isBuffer(kid) && verifier.key.kid) {
+        if (kid.equals(Buffer.from(verifier.key.kid, 'utf8'))) {
+          return signers[i];
+        }
+      } else if (kid && typeof kid === 'string' && verifier.key.kid) {
+        if (kid === verifier.key.kid) {
+          return signers[i];
+        }
+      }
     }
   }
   return undefined;
