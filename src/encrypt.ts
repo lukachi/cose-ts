@@ -2,8 +2,7 @@ import * as cbor from 'cbor';
 import * as crypto from 'crypto';
 import * as common from './common.js';
 import { hkdf } from '@noble/hashes/hkdf';
-import { sha256 } from '@noble/hashes/sha256';
-import { sha512 } from '@noble/hashes/sha512';
+import { sha256, sha512 } from '@noble/hashes/sha2';
 import type { COSEHeaders, COSERecipient, COSEOptions, COSEKey } from './types.js';
 
 const Tagged = cbor.Tagged;

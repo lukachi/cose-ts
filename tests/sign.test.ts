@@ -1,9 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import * as sign from '../src/sign.js';
 import type { COSEHeaders, COSESigner, COSEVerifier, COSEOptions } from '../src/types.js';
-import { p256 } from '@noble/curves/p256';
-import { p384 } from '@noble/curves/p384';
-import { p521 } from '@noble/curves/p521';
+import { p256, p384, p521 } from '@noble/curves/nist';
 import * as jsrsasign from 'jsrsasign';
 
 describe('COSE Sign Module', () => {

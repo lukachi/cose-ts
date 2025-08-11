@@ -2,8 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import * as encrypt from '../src/encrypt.js';
 import type { COSEHeaders, COSERecipient, COSEOptions } from '../src/types.js';
 import * as crypto from 'crypto';
-import { p256 } from '@noble/curves/p256';
-import { p521 } from '@noble/curves/p521';
+import { p256, p521 } from '@noble/curves/nist';
 
 describe('COSE Encrypt Module', () => {
   // Test vectors and constants

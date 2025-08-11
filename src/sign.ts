@@ -1,9 +1,6 @@
 import * as cbor from 'cbor';
-import { p256 } from '@noble/curves/p256';
-import { p384 } from '@noble/curves/p384';
-import { p521 } from '@noble/curves/p521';
-import { sha256 } from '@noble/hashes/sha256';
-import { sha384, sha512 } from '@noble/hashes/sha512';
+import { p256, p384, p521 } from '@noble/curves/nist';
+import { sha256, sha384, sha512 } from '@noble/hashes/sha2';
 import * as jsrsasign from 'jsrsasign';
 import * as common from './common.js';
 import type { COSEHeaders, COSESigner, COSEVerifier, COSEOptions, AlgorithmInfo, NodeAlgorithm } from './types.js';
