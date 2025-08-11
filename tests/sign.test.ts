@@ -768,4 +768,85 @@ describe('COSE Sign Module', () => {
       }
     });
   });
+
+  describe('Payload Format Handling', () => {
+    const testSigner: COSESigner = {
+      key: {
+        kty: 'EC2',
+        crv: 'P-256',
+        x: Buffer.from(new Uint8Array(testKeys.p256.public).slice(1, 33)),
+        y: Buffer.from(new Uint8Array(testKeys.p256.public).slice(33, 65)),
+        d: Buffer.from(testKeys.p256.private)
+      }
+    };
+
+    const headers: COSEHeaders = {
+      p: { alg: 'ES256' } // ES256
+    };
+
+    it('should handle raw bytes payload format', async () => {
+      const rawPayload = Buffer.from('Hello, raw bytes!');
+      
+      const signedData = await sign.create(headers, rawPayload, testSigner, {
+        payloadFormat: 'raw'
+      });
+      
+      expect(Buffer.isBuffer(signedData)).toBe(true);
+    });
+
+    it('should handle CBOR-encoded payload format', async () => {
+      const objectPayload = { message: 'Hello, CBOR!' };
+      
+      const signedData = await sign.create(headers, objectPayload, testSigner, {
+        payloadFormat: 'cbor-encoded'
+      });
+      
+      expect(Buffer.isBuffer(signedData)).toBe(true);
+    });
+
+    it('should auto-detect raw bytes', async () => {
+      const rawPayload = Buffer.from('Hello, auto-detect!');
+      
+      const signedData = await sign.create(headers, rawPayload, testSigner, {
+        payloadFormat: 'auto-detect'
+      });
+      
+      expect(Buffer.isBuffer(signedData)).toBe(true);
+    });
+
+    it('should auto-detect tagged values', async () => {
+      const typedArray = new Uint8Array([1, 2, 3, 4, 5]);
+      const taggedPayload = sign.createTypedArrayPayload(typedArray);
+      
+      const signedData = await sign.create(headers, taggedPayload, testSigner, {
+        payloadFormat: 'auto-detect'
+      });
+      
+      expect(Buffer.isBuffer(signedData)).toBe(true);
+    });
+
+    it('should create typed array payload with tag(64)', () => {
+      const typedArray = new Uint8Array([1, 2, 3, 4, 5]);
+      const taggedPayload = sign.createTypedArrayPayload(typedArray);
+      
+      expect(taggedPayload.tag).toBe(64);
+      expect(taggedPayload.value).toEqual(typedArray);
+    });
+
+    it('should create CBOR payload with tag(24)', () => {
+      const data = { message: 'test' };
+      const cborPayload = sign.createCborPayload(data);
+      
+      expect(cborPayload.tag).toBe(24);
+      expect(Buffer.isBuffer(cborPayload.value)).toBe(true);
+    });
+
+    it('should return raw bytes payload as-is', () => {
+      const rawBytes = Buffer.from('test data');
+      const bytesPayload = sign.createBytesPayload(rawBytes);
+      
+      expect(bytesPayload).toBe(rawBytes);
+      expect(Buffer.isBuffer(bytesPayload)).toBe(true);
+    });
+  });
 });

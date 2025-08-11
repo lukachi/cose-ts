@@ -65,6 +65,7 @@ export interface COSEOptions {
   excludetag?: boolean;
   encodep?: string;
   defaultType?: number;
+  payloadFormat?: 'raw' | 'cbor-encoded' | 'auto-detect';
 }
 
 export interface NodeAlgorithm {
