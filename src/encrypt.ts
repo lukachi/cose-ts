@@ -1,18 +1,20 @@
-import * as cbor from 'cbor2';
+import * as cbor from 'cbor';
 import * as crypto from 'crypto';
 import * as common from './common.js';
 import { hkdf } from '@noble/hashes/hkdf';
 import { sha256, sha512 } from '@noble/hashes/sha2';
 import type { COSEHeaders, COSERecipient, COSEOptions, COSEKey } from './types.js';
 
+const { Tagged } = cbor;
+
 // Wrapper functions for CBOR operations with canonical encoding
 function encode(data: any): Buffer {
-  const encoded = cbor.encode(data, cbor.dcborEncodeOptions);
+  const encoded = cbor.encode(data);
   return Buffer.from(encoded);
 }
 
 function decode(data: Buffer): any {
-  return cbor.decode(new Uint8Array(data));
+  return cbor.decode(data);
 }
 
 const EMPTY_BUFFER = common.EMPTY_BUFFER;
@@ -335,7 +337,7 @@ export function create(headers: COSEHeaders, payload: Buffer, recipients: COSERe
         }
 
         const encrypted = [encodedP, uMap, ciphertext, recipientStruct];
-        resolve(encode(options.excludetag ? encrypted : new cbor.Tag(EncryptTag, encrypted)));
+        resolve(encode(options.excludetag ? encrypted : new Tagged(EncryptTag, encrypted)));
       } else {
         let iv: Buffer;
         if (options.contextIv) {
@@ -366,7 +368,7 @@ export function create(headers: COSEHeaders, payload: Buffer, recipients: COSERe
           encodedP = encode(pMap);
         }
         const encrypted = [encodedP, uMap, ciphertext];
-        resolve(encode(options.excludetag ? encrypted : new cbor.Tag(Encrypt0Tag, encrypted)));
+        resolve(encode(options.excludetag ? encrypted : new Tagged(Encrypt0Tag, encrypted)));
       }
     } catch (error) {
       reject(error);
@@ -390,12 +392,12 @@ export async function read(data: Buffer, key: Buffer, options?: COSEOptions): Pr
   const externalAAD = options.externalAAD || EMPTY_BUFFER;
   let obj = decode(data);
   let msgTag = options.defaultType ? options.defaultType : EncryptTag;
-  if (obj instanceof cbor.Tag) {
+  if (obj instanceof Tagged) {
     if (obj.tag !== EncryptTag && obj.tag !== Encrypt0Tag) {
       throw new Error('Unknown tag, ' + obj.tag);
     }
     msgTag = Number(obj.tag);
-    obj = obj.contents;
+    obj = obj.value;
   }
 
   if (!Array.isArray(obj)) {

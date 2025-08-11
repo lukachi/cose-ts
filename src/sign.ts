@@ -1,18 +1,20 @@
-import * as cbor from 'cbor2';
+import * as cbor from 'cbor';
 import { p256, p384, p521 } from '@noble/curves/nist';
 import { sha256, sha384, sha512 } from '@noble/hashes/sha2';
 import * as jsrsasign from 'jsrsasign';
 import * as common from './common.js';
 import type { COSEHeaders, COSESigner, COSEVerifier, COSEOptions, AlgorithmInfo, NodeAlgorithm } from './types.js';
 
+const { Tagged } = cbor;
+
 // Wrapper functions for CBOR operations with canonical encoding
 function encode(data: any): Buffer {
-  const encoded = cbor.encode(data, cbor.dcborEncodeOptions);
+  const encoded = cbor.encode(data);
   return Buffer.from(encoded);
 }
 
 function decode(data: Buffer): any {
-  return cbor.decode(new Uint8Array(data));
+  return cbor.decode(data);
 }
 
 const EMPTY_BUFFER = common.EMPTY_BUFFER;
@@ -357,7 +359,7 @@ export function create(headers: COSEHeaders, payload: Buffer, signers: COSESigne
       encodedP = encode(pMap);
     }
     const signed = [encodedP, uMap, payload, signatures];
-    return Promise.resolve(encode(options.excludetag ? signed : new cbor.Tag(SignTag, signed)));
+    return Promise.resolve(encode(options.excludetag ? signed : new Tagged(SignTag, signed)));
   } else {
     const signer = signers;
     const externalAAD = signer.externalAAD || EMPTY_BUFFER;
@@ -381,7 +383,7 @@ export function create(headers: COSEHeaders, payload: Buffer, signers: COSESigne
       encodedP = encode(pMap);
     }
     const signed = [encodedP, uMap, payload, sig];
-    return Promise.resolve(encode(options.excludetag ? signed : new cbor.Tag(Sign1Tag, signed)));
+    return Promise.resolve(encode(options.excludetag ? signed : new Tagged(Sign1Tag, signed)));
   }
 }
 
@@ -639,12 +641,12 @@ export function verifySync(payload: Buffer, verifier: COSEVerifier, options?: CO
 function verifyInternal(verifier: COSEVerifier, options: COSEOptions, obj: any): Buffer {
   options = options || {};
   let type = options.defaultType ? options.defaultType : SignTag;
-  if (obj instanceof cbor.Tag) {
+  if (obj instanceof Tagged) {
     if (obj.tag !== SignTag && obj.tag !== Sign1Tag) {
       throw new Error('Unexpected cbor tag, \'' + obj.tag + '\'');
     }
     type = Number(obj.tag);
-    obj = obj.contents;
+    obj = obj.value;
   }
 
   if (!Array.isArray(obj)) {

@@ -1,18 +1,20 @@
-import * as cbor from 'cbor2';
+import * as cbor from 'cbor';
 // @ts-ignore
 import { create as createMac } from 'aes-cbc-mac';
 import * as crypto from 'crypto';
 import * as common from './common.js';
 import type { COSEHeaders, COSERecipient, COSEOptions } from './types.js';
 
+const { Tagged } = cbor;
+
 // Wrapper functions for CBOR operations with canonical encoding
 function encode(data: any): Buffer {
-  const encoded = cbor.encode(data, cbor.dcborEncodeOptions);
+  const encoded = cbor.encode(data);
   return Buffer.from(encoded);
 }
 
 function decode(data: Buffer): any {
-  return cbor.decode(new Uint8Array(data));
+  return cbor.decode(data);
 }
 
 const EMPTY_BUFFER = common.EMPTY_BUFFER;
@@ -138,7 +140,7 @@ export async function create(
     const ru = common.TranslateHeaders(recipient.u || {});
     const rp = EMPTY_BUFFER;
     const maced = [encodedP, uMap, payload, tag, [[rp, ru, EMPTY_BUFFER]]];
-    return encode(options.excludetag ? maced : new cbor.Tag(MACTag, maced));
+    return encode(options.excludetag ? maced : new Tagged(MACTag, maced));
   } else {
     const predictableP = (!pMap.size) ? EMPTY_BUFFER : encode(pMap);
     let encodedP: Buffer;
@@ -150,7 +152,7 @@ export async function create(
     let tag = await doMac('MAC0', predictableP, externalAAD, payload, COSEAlgToNodeAlg[AlgFromTags[alg]], recipients.key as Buffer);
     tag = tag.slice(0, CutTo[alg]);
     const maced = [encodedP, uMap, payload, tag];
-    return encode(options.excludetag ? maced : new cbor.Tag(MAC0Tag, maced));
+    return encode(options.excludetag ? maced : new Tagged(MAC0Tag, maced));
   }
 }
 
@@ -161,12 +163,12 @@ export async function read(data: Buffer, key: Buffer, externalAAD?: Buffer, opti
   let obj = decode(data);
 
   let type = options.defaultType ? options.defaultType : MAC0Tag;
-  if (obj instanceof cbor.Tag) {
+  if (obj instanceof Tagged) {
     if (obj.tag !== MAC0Tag && obj.tag !== MACTag) {
       throw new Error('Unexpected cbor tag, \'' + obj.tag + '\'');
     }
     type = Number(obj.tag);
-    obj = obj.contents;
+    obj = obj.value;
   }
 
   if (!Array.isArray(obj)) {

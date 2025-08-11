@@ -1,11 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { randomBytes } from '@noble/hashes/utils'
-import { Tag } from 'cbor-x'
 import { hkdf } from '@noble/hashes/hkdf'
 import { sha256 } from '@noble/hashes/sha2'
 import { sign, encrypt, type COSEHeaders, type COSESigner, type COSEOptions } from '../src'
 import { p256 } from '@noble/curves/nist'
-import { encode, decode } from 'cbor-x'
+import * as cbor from 'cbor2'
 
 export class Blockstream {
     private privateKey: Uint8Array
@@ -119,11 +118,11 @@ export const deriveSharedKey = (
 }
 
 export const encodeMessageToCbor = (message: object): Buffer => {
-    return Buffer.from(encode(message))
+    return Buffer.from(cbor.encode(message))
 }
 
 export const decodeCborMessage = <T>(messageBuffer: Buffer): T => {
-    return decode(messageBuffer)
+    return cbor.decode(new Uint8Array(messageBuffer))
 }
 
 export const signMessage = async (privateKey: Uint8Array, cborMessage: Buffer, opts?: {
@@ -218,8 +217,18 @@ const blockstream = new Blockstream(
 
 describe("Build Request", () => {
   it("Should build request and parse it", async () => {
+    const originalMessage = { 'action': 'get', 'resource': '/users' }
+    
+    // Log the original message
+    console.log('Original message:', originalMessage)
+    
+    // Log CBOR encoding of original message
+    const cborMsg = encodeMessageToCbor(originalMessage)
+    console.log('CBOR encoded message:', cborMsg)
+    console.log('CBOR decoded back:', decodeCborMessage(cborMsg))
+    
     const request = await blockstream.request(
-      { 'action': 'get', 'resource': '/users' },
+      originalMessage,
       {
         unprotected: {
           kid: Buffer.from(kid, 'utf-8')
@@ -227,17 +236,39 @@ describe("Build Request", () => {
       }
     )
 
+    console.log('Final encrypted request buffer:', request.toString('hex'))
+    console.log('Final encrypted request buffer length:', request.length)
+    
+    // Let's also log the intermediate steps
+    const signedMessage = await signMessage(
+      new Uint8Array(Buffer.from(adminPK, 'hex')), 
+      cborMsg,
+      {
+        unprotected: {
+          kid: Buffer.from(kid, 'utf-8')
+        }
+      }
+    )
+    console.log('Signed message:', signedMessage.toString('hex'))
+    console.log('Signed message decoded:', cbor.decode(new Uint8Array(signedMessage)))
+
     const sharedKey = deriveSharedKey(new Uint8Array(Buffer.from(adminPK, 'hex')), new Uint8Array(Buffer.from(hsmPK, 'hex')))
     const decryptedRequest = await encrypt.read(
       request,
       Buffer.from(sharedKey)
     )
 
+    console.log('Decrypted request:', decryptedRequest)
+    console.log('Decrypted request decoded:', cbor.decode(new Uint8Array(decryptedRequest)))
+
     const adminPublicKey = p256.getPublicKey(new Uint8Array(Buffer.from(adminPK, 'hex')), true)
     const verifiedRequest = await verifyMessage(
       adminPublicKey,
       decryptedRequest
     )
+
+    console.log('Verified request:', verifiedRequest)
+    console.log('Verified request decoded:', decodeCborMessage(verifiedRequest))
 
     expect(verifiedRequest).toBeDefined()
   })
