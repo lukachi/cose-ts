@@ -1,11 +1,11 @@
-import * as cbor from 'cbor';
+import * as cbor from 'cbor-x';
 import * as crypto from 'crypto';
 import * as common from './common.js';
 import { hkdf } from '@noble/hashes/hkdf';
 import { sha256, sha512 } from '@noble/hashes/sha2';
 import type { COSEHeaders, COSERecipient, COSEOptions, COSEKey } from './types.js';
 
-const Tagged = cbor.Tagged;
+const Tagged = cbor.Tag;
 
 const EMPTY_BUFFER = common.EMPTY_BUFFER;
 export const EncryptTag = 96;
@@ -311,6 +311,7 @@ export function create(headers: COSEHeaders, payload: Buffer, recipients: COSERe
 
         let ciphertext: Buffer;
         if (isNodeAlg[alg]) {
+          console.log(payload, key, alg, iv, aad)
           ciphertext = nodeEncrypt(payload, key, alg, iv, aad);
         } else if (isCCMAlg[alg] && runningInNode()) {
           ciphertext = nodeEncrypt(payload, key, alg, iv, aad, true);
@@ -326,7 +327,7 @@ export function create(headers: COSEHeaders, payload: Buffer, recipients: COSERe
         }
 
         const encrypted = [encodedP, uMap, ciphertext, recipientStruct];
-        resolve(cbor.encode(options.excludetag ? encrypted : new Tagged(EncryptTag, encrypted)));
+        resolve(cbor.encode(options.excludetag ? encrypted : new Tagged(encrypted, EncryptTag)));
       } else {
         let iv: Buffer;
         if (options.contextIv) {
@@ -357,7 +358,7 @@ export function create(headers: COSEHeaders, payload: Buffer, recipients: COSERe
           encodedP = cbor.encode(pMap);
         }
         const encrypted = [encodedP, uMap, ciphertext];
-        resolve(cbor.encode(options.excludetag ? encrypted : new Tagged(Encrypt0Tag, encrypted)));
+        resolve(cbor.encode(options.excludetag ? encrypted : new Tagged(encrypted, Encrypt0Tag)));
       }
     } catch (error) {
       reject(error);
@@ -379,7 +380,7 @@ function nodeDecrypt(ciphertext: Buffer, key: Buffer, alg: number, iv: Buffer, t
 export async function read(data: Buffer, key: Buffer, options?: COSEOptions): Promise<Buffer> {
   options = options || {};
   const externalAAD = options.externalAAD || EMPTY_BUFFER;
-  let obj = await cbor.decodeFirst(data);
+  let obj = cbor.decode(data);
   let msgTag = options.defaultType ? options.defaultType : EncryptTag;
   if (obj instanceof Tagged) {
     if (obj.tag !== EncryptTag && obj.tag !== Encrypt0Tag) {
@@ -403,7 +404,17 @@ export async function read(data: Buffer, key: Buffer, options?: COSEOptions): Pr
 
   let [p, u, ciphertext] = obj;
 
-  const pMap = (p.length === 0) ? EMPTY_BUFFER : cbor.decodeFirstSync(p);
+  // Ensure p is a Buffer 
+  if (Array.isArray(p)) {
+    p = Buffer.from(p);
+  }
+
+  // Ensure ciphertext is a Buffer
+  if (Array.isArray(ciphertext)) {
+    ciphertext = Buffer.from(ciphertext);
+  }
+
+  const pMap = (p.length === 0) ? EMPTY_BUFFER : cbor.decode(p);
   const pDecoded = (!(pMap as Map<number, any>).size) ? EMPTY_BUFFER : pMap;
   const uDecoded = (!u.size) ? EMPTY_BUFFER : u;
 
@@ -414,6 +425,12 @@ export async function read(data: Buffer, key: Buffer, options?: COSEOptions): Pr
 
   let iv = (uDecoded as Map<number, any>).get(common.HeaderParameters.IV);
   const partialIv = (uDecoded as Map<number, any>).get(common.HeaderParameters.Partial_IV);
+  
+  // Ensure iv is a Buffer if it exists
+  if (iv && Array.isArray(iv)) {
+    iv = Buffer.from(iv);
+  }
+  
   if (iv && partialIv) {
     throw new Error('IV and Partial IV parameters MUST NOT both be present in the same security layer');
   }

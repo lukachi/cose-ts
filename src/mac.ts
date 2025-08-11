@@ -1,11 +1,11 @@
-import * as cbor from 'cbor';
+import * as cbor from 'cbor-x';
 // @ts-ignore
 import { create as createMac } from 'aes-cbc-mac';
 import * as crypto from 'crypto';
 import * as common from './common.js';
 import type { COSEHeaders, COSERecipient, COSEOptions } from './types.js';
 
-const Tagged = cbor.Tagged;
+const Tagged = cbor.Tag;
 const EMPTY_BUFFER = common.EMPTY_BUFFER;
 
 export const MAC0Tag = 17;
@@ -129,7 +129,7 @@ export async function create(
     const ru = common.TranslateHeaders(recipient.u || {});
     const rp = EMPTY_BUFFER;
     const maced = [encodedP, uMap, payload, tag, [[rp, ru, EMPTY_BUFFER]]];
-    return cbor.encode(options.excludetag ? maced : new Tagged(MACTag, maced));
+    return cbor.encode(options.excludetag ? maced : new Tagged(maced, MACTag));
   } else {
     const predictableP = (!pMap.size) ? EMPTY_BUFFER : cbor.encode(pMap);
     let encodedP: Buffer;
@@ -141,7 +141,7 @@ export async function create(
     let tag = await doMac('MAC0', predictableP, externalAAD, payload, COSEAlgToNodeAlg[AlgFromTags[alg]], recipients.key as Buffer);
     tag = tag.slice(0, CutTo[alg]);
     const maced = [encodedP, uMap, payload, tag];
-    return cbor.encode(options.excludetag ? maced : new Tagged(MAC0Tag, maced));
+    return cbor.encode(options.excludetag ? maced : new Tagged(maced, MAC0Tag));
   }
 }
 
@@ -149,7 +149,7 @@ export async function read(data: Buffer, key: Buffer, externalAAD?: Buffer, opti
   options = options || {};
   externalAAD = externalAAD || EMPTY_BUFFER;
 
-  let obj = await cbor.decodeFirst(data);
+  let obj = cbor.decode(data);
 
   let type = options.defaultType ? options.defaultType : MAC0Tag;
   if (obj instanceof Tagged) {

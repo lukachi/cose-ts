@@ -1,4 +1,4 @@
-import * as cbor from 'cbor';
+import * as cbor from 'cbor-x';
 import { p256, p384, p521 } from '@noble/curves/nist';
 import { sha256, sha384, sha512 } from '@noble/hashes/sha2';
 import * as jsrsasign from 'jsrsasign';
@@ -6,7 +6,7 @@ import * as common from './common.js';
 import type { COSEHeaders, COSESigner, COSEVerifier, COSEOptions, AlgorithmInfo, NodeAlgorithm } from './types.js';
 
 const EMPTY_BUFFER = common.EMPTY_BUFFER;
-const Tagged = cbor.Tagged;
+const Tagged = cbor.Tag;
 
 export const SignTag = 98;
 export const Sign1Tag = 18;
@@ -348,7 +348,7 @@ export function create(headers: COSEHeaders, payload: Buffer, signers: COSESigne
       encodedP = cbor.encode(pMap);
     }
     const signed = [encodedP, uMap, payload, signatures];
-    return cbor.encodeAsync(options.excludetag ? signed : new Tagged(SignTag, signed));
+    return Promise.resolve(cbor.encode(options.excludetag ? signed : new Tagged(signed, SignTag)));
   } else {
     const signer = signers;
     const externalAAD = signer.externalAAD || EMPTY_BUFFER;
@@ -367,7 +367,7 @@ export function create(headers: COSEHeaders, payload: Buffer, signers: COSESigne
       encodedP = cbor.encode(pMap);
     }
     const signed = [encodedP, uMap, payload, sig];
-    return cbor.encodeAsync(options.excludetag ? signed : new Tagged(Sign1Tag, signed), { canonical: true });
+    return Promise.resolve(cbor.encode(options.excludetag ? signed : new Tagged(signed, Sign1Tag)));
   }
 }
 
@@ -393,16 +393,25 @@ function doVerify(SigStructure: any[], verifier: COSEVerifier, alg: number, sig:
     const r = sig.slice(0, coordSize);
     const s = sig.slice(coordSize);
     
+    // Ensure r and s are Buffers (in case they come as arrays from cbor-x)
+    const rBuffer = Buffer.isBuffer(r) ? r : Buffer.from(r);
+    const sBuffer = Buffer.isBuffer(s) ? s : Buffer.from(s);
+    
     // Convert public key coordinates to the right format
     const pubKeyBytes = new Uint8Array(1 + coordSize * 2); // uncompressed format
     pubKeyBytes[0] = 0x04; // uncompressed point indicator
-    verifier.key.x!.copy(pubKeyBytes, 1);
-    verifier.key.y!.copy(pubKeyBytes, 1 + coordSize);
+    
+    // Ensure verifier key coordinates are Buffers
+    const xBuffer = Buffer.isBuffer(verifier.key.x) ? verifier.key.x : Buffer.from(verifier.key.x!);
+    const yBuffer = Buffer.isBuffer(verifier.key.y) ? verifier.key.y : Buffer.from(verifier.key.y!);
+    
+    xBuffer.copy(pubKeyBytes, 1);
+    yBuffer.copy(pubKeyBytes, 1 + coordSize);
     
     // Convert signature to Uint8Array in the format Noble expects (r || s)
     const signatureBytes = new Uint8Array(coordSize * 2);
-    r.copy(signatureBytes, 0);
-    s.copy(signatureBytes, coordSize);
+    rBuffer.copy(signatureBytes, 0);
+    sBuffer.copy(signatureBytes, coordSize);
     
     // Use verify function with raw signature bytes
     const isValid = curve.verify(signatureBytes, msgHash, pubKeyBytes);
@@ -517,6 +526,13 @@ function getSigner(signers: any[][], verifier: COSEVerifier): any[] | undefined 
         if (signerHeaders.kid !== undefined) {
           headerMap.set(common.HeaderParameters.kid, signerHeaders.kid);
         }
+        // Handle numeric keys as well
+        Object.keys(signerHeaders).forEach(key => {
+          const numKey = parseInt(key, 10);
+          if (!isNaN(numKey)) {
+            headerMap.set(numKey, signerHeaders[key]);
+          }
+        });
       }
     }
     
@@ -528,6 +544,13 @@ function getSigner(signers: any[][], verifier: COSEVerifier): any[] | undefined 
         }
       } else if (kid && typeof kid === 'string' && verifier.key.kid) {
         if (kid === verifier.key.kid) {
+          return signers[i];
+        }
+      } else if (kid && Array.isArray(kid) && verifier.key.kid) {
+        // Handle case where kid comes as array from cbor-x
+        const kidBuffer = Buffer.from(kid);
+        const verifierKidBuffer = Buffer.from(verifier.key.kid, 'utf8');
+        if (kidBuffer.equals(verifierKidBuffer)) {
           return signers[i];
         }
       }
@@ -549,13 +572,13 @@ function getCommonParameter(first: Map<number, any> | Buffer, second: Map<number
 
 export async function verify(payload: Buffer, verifier: COSEVerifier, options?: COSEOptions): Promise<Buffer> {
   options = options || {};
-  const obj = await cbor.decodeFirst(payload);
+  const obj = cbor.decode(payload);
   return verifyInternal(verifier, options, obj);
 }
 
 export function verifySync(payload: Buffer, verifier: COSEVerifier, options?: COSEOptions): Buffer {
   options = options || {};
-  const obj = cbor.decodeFirstSync(payload);
+  const obj = cbor.decode(payload);
   return verifyInternal(verifier, options, obj);
 }
 
@@ -580,22 +603,39 @@ function verifyInternal(verifier: COSEVerifier, options: COSEOptions, obj: any):
 
   let [p, u, plaintext, signers] = obj;
 
+  // Ensure p and plaintext are Buffers
+  if (Array.isArray(p)) {
+    p = Buffer.from(p);
+  }
+  if (Array.isArray(plaintext)) {
+    plaintext = Buffer.from(plaintext);
+  }
+
   if (type === SignTag && !Array.isArray(signers)) {
     throw new Error('Expecting signature Array');
   }
 
-  const pMap = (!p.length) ? EMPTY_BUFFER : cbor.decodeFirstSync(p);
+  const pMap = (!p.length) ? EMPTY_BUFFER : cbor.decode(p);
   u = (!u.size) ? EMPTY_BUFFER : u;
 
   const signer = (type === SignTag ? getSigner(signers, verifier) : signers);
 
   if (!signer) {
-    throw new Error('Failed to find signer with kid' + verifier.key.kid);
+    throw new Error('Failed to find signer with kid ' + verifier.key.kid);
   }
 
   if (type === SignTag) {
     const externalAAD = verifier.externalAAD || EMPTY_BUFFER;
     let [signerP, , sig] = signer;
+    
+    // Ensure signerP and sig are Buffers
+    if (Array.isArray(signerP)) {
+      signerP = Buffer.from(signerP);
+    }
+    if (Array.isArray(sig)) {
+      sig = Buffer.from(sig);
+    }
+    
     signerP = (!signerP.length) ? EMPTY_BUFFER : signerP;
     const encodedP = (!(pMap as Map<number, any>).size) ? EMPTY_BUFFER : cbor.encode(pMap);
     const signerPMap = cbor.decode(signerP);
@@ -612,6 +652,12 @@ function verifyInternal(verifier: COSEVerifier, options: COSEOptions, obj: any):
   } else {
     const externalAAD = verifier.externalAAD || EMPTY_BUFFER;
 
+    // Ensure signer (signature) is a Buffer for Sign1 case
+    let signature = signer;
+    if (Array.isArray(signature)) {
+      signature = Buffer.from(signature);
+    }
+
     const alg = getCommonParameter(pMap, u, common.HeaderParameters.alg);
     const encodedP = (!(pMap as Map<number, any>).size) ? EMPTY_BUFFER : cbor.encode(pMap);
     const SigStructure = [
@@ -620,7 +666,7 @@ function verifyInternal(verifier: COSEVerifier, options: COSEOptions, obj: any):
       externalAAD,
       plaintext
     ];
-    doVerify(SigStructure, verifier, alg, signer);
+    doVerify(SigStructure, verifier, alg, signature);
     return plaintext;
   }
 }
