@@ -16,16 +16,17 @@ export default defineConfig({
     },
     rollupOptions: {
       // Externalize deps that shouldn't be bundled into your library
-      external: ['crypto'],
+      external: ['crypto', 'stream'],
       // make sure to externalize deps that shouldn't be bundled
       // into your library
       //   external: ['vue'],
       output: {
         // Provide global variables to use in the UMD build
-        // globals: {
-        //   buffer: 'Buffer',
-        //   crypto: 'crypto',
-        // },
+        globals: {
+          // buffer: 'Buffer',
+          crypto: 'crypto',
+          stream: 'stream',
+        },
       },
     },
   },

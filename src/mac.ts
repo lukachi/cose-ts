@@ -1,8 +1,9 @@
 import * as cbor from 'cbor';
 // @ts-ignore
 import { create as createMac } from 'aes-cbc-mac';
-import * as crypto from 'crypto';
 import * as common from './common.js';
+import { hmac } from '@noble/hashes/hmac';
+import { sha256, sha384, sha512 } from '@noble/hashes/sha2';
 import type { COSEHeaders, COSERecipient, COSEOptions } from './types.js';
 
 const { Tagged } = cbor;
@@ -89,10 +90,24 @@ function doMac(context: string, p: Buffer, externalAAD: Buffer, payload: Buffer,
       const mac = createMac(key, toBeMACed, 16);
       resolve(mac);
     } else {
-      const hmac = crypto.createHmac(alg, key);
-      hmac.end(toBeMACed, function () {
-        resolve(hmac.read());
-      });
+      // Use @noble/hashes for HMAC
+      let hashFn;
+      switch (alg) {
+        case 'sha256':
+          hashFn = sha256;
+          break;
+        case 'sha384':
+          hashFn = sha384;
+          break;
+        case 'sha512':
+          hashFn = sha512;
+          break;
+        default:
+          throw new Error(`Unsupported hash algorithm: ${alg}`);
+      }
+      
+      const macResult = hmac(hashFn, new Uint8Array(key), new Uint8Array(toBeMACed));
+      resolve(Buffer.from(macResult));
     }
   });
 }

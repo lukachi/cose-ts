@@ -1,8 +1,10 @@
 import * as cbor from 'cbor';
-import * as crypto from 'crypto';
 import * as common from './common.js';
 import { hkdf } from '@noble/hashes/hkdf';
 import { sha256, sha512 } from '@noble/hashes/sha2';
+import { randomBytes } from '@noble/hashes/utils';
+import { gcm } from '@noble/ciphers/aes';
+import { p256, p521 } from '@noble/curves/nist';
 import type { COSEHeaders, COSERecipient, COSEOptions, COSEKey } from './types.js';
 
 const { Tagged } = cbor;
@@ -39,25 +41,6 @@ const TagToAlg: TagToAlgMap = {
   31: 'AES-CCM-16-128-256',
   32: 'AES-CCM-64-128-128',
   33: 'AES-CCM-64-128-256'
-};
-
-interface COSEAlgToNodeAlgMap {
-  [key: string]: string;
-}
-
-const COSEAlgToNodeAlg: COSEAlgToNodeAlgMap = {
-  A128GCM: 'aes-128-gcm',
-  A192GCM: 'aes-192-gcm',
-  A256GCM: 'aes-256-gcm',
-
-  'AES-CCM-16-64-128': 'aes-128-ccm',
-  'AES-CCM-16-64-256': 'aes-256-ccm',
-  'AES-CCM-64-64-128': 'aes-128-ccm',
-  'AES-CCM-64-64-256': 'aes-256-ccm',
-  'AES-CCM-16-128-128': 'aes-128-ccm',
-  'AES-CCM-16-128-256': 'aes-256-ccm',
-  'AES-CCM-64-128-128': 'aes-128-ccm',
-  'AES-CCM-64-128-256': 'aes-256-ccm'
 };
 
 interface BooleanMap {
@@ -140,14 +123,49 @@ const HKDFAlg: HKDFAlgMap = {
   'ECDH-SS-512': sha512
 };
 
-interface NodeCRVMap {
-  [key: string]: string;
+/**
+ * Generate ECDH key pair using @noble/curves
+ */
+function generateECDHKeyPair(curve: string, privateKey?: Buffer): { publicKey: Buffer; privateKey: Buffer } {
+  switch (curve) {
+    case 'P-256': {
+      const privKey = privateKey || Buffer.from(p256.utils.randomSecretKey());
+      const pubKey = p256.getPublicKey(new Uint8Array(privKey), false); // uncompressed format
+      return { 
+        publicKey: Buffer.from(pubKey), 
+        privateKey: privKey 
+      };
+    }
+    case 'P-521': {
+      const privKey = privateKey || Buffer.from(p521.utils.randomSecretKey());
+      const pubKey = p521.getPublicKey(new Uint8Array(privKey), false); // uncompressed format
+      return { 
+        publicKey: Buffer.from(pubKey), 
+        privateKey: privKey 
+      };
+    }
+    default:
+      throw new Error(`Unsupported curve: ${curve}`);
+  }
 }
 
-const nodeCRV: NodeCRVMap = {
-  'P-521': 'secp521r1',
-  'P-256': 'prime256v1'
-};
+/**
+ * Compute ECDH shared secret using @noble/curves
+ */
+function computeECDHSecret(curve: string, privateKey: Buffer, publicKey: Buffer): Buffer {
+  switch (curve) {
+    case 'P-256': {
+      const sharedSecret = p256.getSharedSecret(new Uint8Array(privateKey), new Uint8Array(publicKey));
+      return Buffer.from(sharedSecret);
+    }
+    case 'P-521': {
+      const sharedSecret = p521.getSharedSecret(new Uint8Array(privateKey), new Uint8Array(publicKey));
+      return Buffer.from(sharedSecret);
+    }
+    default:
+      throw new Error(`Unsupported curve: ${curve}`);
+  }
+}
 
 /**
  * Check if the algorithm is an ECDH-based key agreement algorithm
@@ -182,21 +200,23 @@ function createAAD(p: Map<number, any>, context: string, externalAAD: Buffer): B
 }
 
 function _randomSource(bytes: number): Buffer {
-  return crypto.randomBytes(bytes);
+  return Buffer.from(randomBytes(bytes));
 }
 
-function nodeEncrypt(payload: Buffer, key: Buffer, alg: number, iv: Buffer, aad: Buffer, ccm = false): Buffer {
-  const nodeAlg = COSEAlgToNodeAlg[TagToAlg[alg]];
-  const cipher = ccm 
-    ? crypto.createCipheriv(nodeAlg, key, iv, { authTagLength: authTagLength[alg] } as any)
-    : crypto.createCipheriv(nodeAlg, key, iv);
-  const aadOptions = ccm ? { plaintextLength: Buffer.byteLength(payload) } : undefined;
-  (cipher as any).setAAD(aad, aadOptions);
-  return Buffer.concat([
-    cipher.update(payload),
-    cipher.final(),
-    (cipher as any).getAuthTag()
-  ]);
+function nobleEncrypt(payload: Buffer, key: Buffer, alg: number, iv: Buffer, aad: Buffer, ccm = false): Buffer {
+  if (ccm) {
+    throw new Error(`CCM algorithms (${TagToAlg[alg]}) are not yet supported with @noble/ciphers. Use Node.js environment for CCM support.`);
+  }
+  
+  // Only support GCM algorithms with @noble/ciphers
+  if (!isNodeAlg[alg]) {
+    throw new Error(`Algorithm ${TagToAlg[alg]} is not supported with @noble/ciphers`);
+  }
+  
+  // Convert Buffers to Uint8Array for @noble/ciphers
+  const cipher = gcm(new Uint8Array(key), new Uint8Array(iv), new Uint8Array(aad));
+  const encrypted = cipher.encrypt(new Uint8Array(payload));
+  return Buffer.from(encrypted);
 }
 
 function createContext(rp: Buffer, alg: number, partyUNonce?: Buffer | null): Buffer {
@@ -264,9 +284,7 @@ export function create(headers: COSEHeaders, payload: Buffer, recipients: COSERe
           const recipientKey = recipients[0].key as COSEKey;
           const recipientAlg = recipients[0].p!.alg as string;
           
-          const recipient = crypto.createECDH(nodeCRV[recipientKey.crv!]);
-          const generated = crypto.createECDH(nodeCRV[recipientKey.crv!]);
-          recipient.setPrivateKey(recipientKey.d!);
+          // Generate key pair for sender
           let pk = randomSource(keyLength[recipientKey.crv!]);
           if (recipientAlg === 'ECDH-ES' || recipientAlg === 'ECDH-ES-512') {
             pk = randomSource(keyLength[recipientKey.crv!]);
@@ -275,8 +293,7 @@ export function create(headers: COSEHeaders, payload: Buffer, recipients: COSERe
             pk = recipients[0].sender!.d!;
           }
 
-          generated.setPrivateKey(pk);
-          const senderPublicKey = generated.getPublicKey();
+          const senderKeyPair = generateECDHKeyPair(recipientKey.crv!, pk);
           const recipientPublicKey = Buffer.concat([
             Buffer.from('04', 'hex'),
             recipientKey.x!,
@@ -285,12 +302,12 @@ export function create(headers: COSEHeaders, payload: Buffer, recipients: COSERe
 
           const generatedKey = common.TranslateKey({
             crv: recipientKey.crv!,
-            x: senderPublicKey.slice(1, keyLength[recipientKey.crv!] + 1),
-            y: senderPublicKey.slice(keyLength[recipientKey.crv!] + 1, keyLength[recipientKey.crv!] * 2 + 1),
+            x: senderKeyPair.publicKey.slice(1, keyLength[recipientKey.crv!] + 1),
+            y: senderKeyPair.publicKey.slice(keyLength[recipientKey.crv!] + 1, keyLength[recipientKey.crv!] * 2 + 1),
             kty: 'EC2'
           });
           const rp = encode(common.TranslateHeaders(recipients[0].p!));
-          const ikm = generated.computeSecret(recipientPublicKey);
+          const ikm = computeECDHSecret(recipientKey.crv!, senderKeyPair.privateKey, recipientPublicKey);
           let partyUNonce: Buffer | null = null;
           if (recipientAlg === 'ECDH-SS' || recipientAlg === 'ECDH-SS-512') {
             // Generate a random nonce for Static-Static key agreement
@@ -322,9 +339,9 @@ export function create(headers: COSEHeaders, payload: Buffer, recipients: COSERe
         let ciphertext: Buffer;
         if (isNodeAlg[alg]) {
           console.log(payload, key, alg, iv, aad)
-          ciphertext = nodeEncrypt(payload, key, alg, iv, aad);
+          ciphertext = nobleEncrypt(payload, key, alg, iv, aad);
         } else if (isCCMAlg[alg] && runningInNode()) {
-          ciphertext = nodeEncrypt(payload, key, alg, iv, aad, true);
+          ciphertext = nobleEncrypt(payload, key, alg, iv, aad, true);
         } else {
           throw new Error('No implementation for algorithm, ' + alg);
         }
@@ -354,9 +371,9 @@ export function create(headers: COSEHeaders, payload: Buffer, recipients: COSERe
         const aad = createAAD(pMap, 'Encrypt0', externalAAD);
         let ciphertext: Buffer;
         if (isNodeAlg[alg]) {
-          ciphertext = nodeEncrypt(payload, key, alg, iv, aad);
+          ciphertext = nobleEncrypt(payload, key, alg, iv, aad);
         } else if (isCCMAlg[alg] && runningInNode()) {
-          ciphertext = nodeEncrypt(payload, key, alg, iv, aad, true);
+          ciphertext = nobleEncrypt(payload, key, alg, iv, aad, true);
         } else {
           throw new Error('No implementation for algorithm, ' + alg);
         }
@@ -376,15 +393,22 @@ export function create(headers: COSEHeaders, payload: Buffer, recipients: COSERe
   });
 }
 
-function nodeDecrypt(ciphertext: Buffer, key: Buffer, alg: number, iv: Buffer, tag: Buffer, aad: Buffer, ccm = false): Buffer {
-  const nodeAlg = COSEAlgToNodeAlg[TagToAlg[alg]];
-  const decipher = ccm 
-    ? crypto.createDecipheriv(nodeAlg, key, iv, { authTagLength: authTagLength[alg] } as any)
-    : crypto.createDecipheriv(nodeAlg, key, iv);
-  const aadOptions = ccm ? { plaintextLength: Buffer.byteLength(ciphertext) } : undefined;
-  (decipher as any).setAuthTag(tag);
-  (decipher as any).setAAD(aad, aadOptions);
-  return Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+function nobleDecrypt(ciphertext: Buffer, key: Buffer, alg: number, iv: Buffer, tag: Buffer, aad: Buffer, ccm = false): Buffer {
+  if (ccm) {
+    throw new Error(`CCM algorithms (${TagToAlg[alg]}) are not yet supported with @noble/ciphers. Use Node.js environment for CCM support.`);
+  }
+  
+  // Only support GCM algorithms with @noble/ciphers
+  if (!isNodeAlg[alg]) {
+    throw new Error(`Algorithm ${TagToAlg[alg]} is not supported with @noble/ciphers`);
+  }
+  
+  // Combine ciphertext and tag for @noble/ciphers
+  const ciphertextWithTag = Buffer.concat([ciphertext, tag]);
+  // Convert Buffers to Uint8Array for @noble/ciphers
+  const cipher = gcm(new Uint8Array(key), new Uint8Array(iv), new Uint8Array(aad));
+  const decrypted = cipher.decrypt(new Uint8Array(ciphertextWithTag));
+  return Buffer.from(decrypted);
 }
 
 export async function read(data: Buffer, key: Buffer, options?: COSEOptions): Promise<Buffer> {
@@ -511,9 +535,9 @@ export async function read(data: Buffer, key: Buffer, options?: COSEOptions): Pr
 
   const aad = createAAD(pDecoded as Map<number, any>, (msgTag === EncryptTag ? 'Encrypt' : 'Encrypt0'), externalAAD);
   if (isNodeAlg[alg]) {
-    return nodeDecrypt(ciphertext, key, alg, iv, tag, aad);
+    return nobleDecrypt(ciphertext, key, alg, iv, tag, aad);
   } else if (isCCMAlg[alg] && runningInNode()) {
-    return nodeDecrypt(ciphertext, key, alg, iv, tag, aad, true);
+    return nobleDecrypt(ciphertext, key, alg, iv, tag, aad, true);
   } else {
     throw new Error('No implementation for algorithm, ' + alg);
   }
