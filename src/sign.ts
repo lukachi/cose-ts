@@ -1,12 +1,21 @@
-import * as cbor from 'cbor-x';
+import * as cbor from 'cbor2';
 import { p256, p384, p521 } from '@noble/curves/nist';
 import { sha256, sha384, sha512 } from '@noble/hashes/sha2';
 import * as jsrsasign from 'jsrsasign';
 import * as common from './common.js';
 import type { COSEHeaders, COSESigner, COSEVerifier, COSEOptions, AlgorithmInfo, NodeAlgorithm } from './types.js';
 
+// Wrapper functions for CBOR operations with canonical encoding
+function encode(data: any): Buffer {
+  const encoded = cbor.encode(data, cbor.dcborEncodeOptions);
+  return Buffer.from(encoded);
+}
+
+function decode(data: Buffer): any {
+  return cbor.decode(new Uint8Array(data));
+}
+
 const EMPTY_BUFFER = common.EMPTY_BUFFER;
-const Tagged = cbor.Tag;
 
 export const SignTag = 98;
 export const Sign1Tag = 18;
@@ -172,7 +181,7 @@ function doSign(SigStructure: any[], signer: COSESigner, alg: number): Buffer {
     throw new Error('Unsupported algorithm, ' + AlgFromTags[alg].sign);
   }
 
-  let ToBeSigned = cbor.encode(SigStructure);
+  let ToBeSigned = encode(SigStructure);
 
   let sig: Buffer;
   if (AlgFromTags[alg].sign.startsWith('ES')) {
@@ -262,7 +271,7 @@ export async function doSignAsync(SigStructure: any[], signer: COSESigner, alg: 
     throw new Error('Unsupported algorithm, ' + AlgFromTags[alg].sign);
   }
 
-  let ToBeSigned = cbor.encode(SigStructure);
+  let ToBeSigned = encode(SigStructure);
 
   let sig: Buffer;
   if (AlgFromTags[alg].sign.startsWith('ES')) {
@@ -304,7 +313,7 @@ export function create(headers: COSEHeaders, payload: Buffer, signers: COSESigne
   const pMap = common.TranslateHeaders(p);
   const uMap = common.TranslateHeaders(u);
   let bodyP = pMap || new Map();
-  let bodyPEncoded = (bodyP.size === 0) ? EMPTY_BUFFER : cbor.encode(bodyP);
+  let bodyPEncoded = (bodyP.size === 0) ? EMPTY_BUFFER : encode(bodyP);
   
   if (Array.isArray(signers)) {
     if (signers.length === 0) {
@@ -327,7 +336,7 @@ export function create(headers: COSEHeaders, payload: Buffer, signers: COSESigne
       const signerPMap = common.TranslateHeaders(signerP);
       const signerUMap = common.TranslateHeaders(signerU);
       const alg = signerPMap.get(common.HeaderParameters.alg);
-      const signerPEncoded = (signerPMap.size === 0) ? EMPTY_BUFFER : cbor.encode(signerPMap);
+            const signerPEncoded = (signerPMap.size === 0) ? EMPTY_BUFFER : encode(signerPMap);
 
       const SigStructure = [
         'Signature',
@@ -345,10 +354,10 @@ export function create(headers: COSEHeaders, payload: Buffer, signers: COSESigne
     if (pMap.size === 0 && options.encodep === 'empty') {
       encodedP = EMPTY_BUFFER;
     } else {
-      encodedP = cbor.encode(pMap);
+      encodedP = encode(pMap);
     }
     const signed = [encodedP, uMap, payload, signatures];
-    return Promise.resolve(cbor.encode(options.excludetag ? signed : new Tagged(signed, SignTag)));
+    return Promise.resolve(encode(options.excludetag ? signed : new cbor.Tag(SignTag, signed)));
   } else {
     const signer = signers;
     const externalAAD = signer.externalAAD || EMPTY_BUFFER;
@@ -364,14 +373,14 @@ export function create(headers: COSEHeaders, payload: Buffer, signers: COSESigne
     if (pMap.size === 0 && options.encodep === 'empty') {
       encodedP = EMPTY_BUFFER;
     } else {
-      encodedP = cbor.encode(pMap);
+      encodedP = encode(pMap);
     }
     const signed = [encodedP, uMap, payload, sig];
-    return Promise.resolve(cbor.encode(options.excludetag ? signed : new Tagged(signed, Sign1Tag)));
+    return Promise.resolve(encode(options.excludetag ? signed : new cbor.Tag(Sign1Tag, signed)));
   }
 }
 
-function doVerify(SigStructure: any[], verifier: COSEVerifier, alg: number, sig: Buffer): void {
+function doVerify(SigStructure: any[], verifier: COSEVerifier, alg: number, sig: Buffer | any): void {
   if (!AlgFromTags[alg]) {
     throw new Error('Unknown algorithm, ' + alg);
   }
@@ -379,7 +388,24 @@ function doVerify(SigStructure: any[], verifier: COSEVerifier, alg: number, sig:
   if (!nobleAlg) {
     throw new Error('Unsupported algorithm, ' + AlgFromTags[alg].sign);
   }
-  const ToBeSigned = cbor.encode(SigStructure);
+
+  // Ensure sig is a Buffer
+  if (!Buffer.isBuffer(sig)) {
+    if (Array.isArray(sig)) {
+      sig = Buffer.from(sig);
+    } else if (sig instanceof Uint8Array) {
+      sig = Buffer.from(sig);
+    } else if (typeof sig === 'string') {
+      sig = Buffer.from(sig, 'hex');
+    } else if (sig && typeof sig === 'object' && sig.data) {
+      // Handle case where signature might be wrapped in an object
+      sig = Buffer.from(sig.data);
+    } else {
+      throw new Error('Invalid signature format');
+    }
+  }
+
+  const ToBeSigned = encode(SigStructure);
 
   if (AlgFromTags[alg].sign.startsWith('ES')) {
     // Use Noble curves for ECDSA verification
@@ -479,7 +505,7 @@ export async function doVerifyAsync(SigStructure: any[], verifier: COSEVerifier,
   if (!nobleAlg) {
     throw new Error('Unsupported algorithm, ' + AlgFromTags[alg].sign);
   }
-  const ToBeSigned = cbor.encode(SigStructure);
+  const ToBeSigned = encode(SigStructure);
 
   if (AlgFromTags[alg].sign.startsWith('ES')) {
     // Use Noble curves for ECDSA verification (same as sync version)
@@ -516,7 +542,13 @@ export async function doVerifyAsync(SigStructure: any[], verifier: COSEVerifier,
 
 function getSigner(signers: any[][], verifier: COSEVerifier): any[] | undefined {
   for (let i = 0; i < signers.length; i++) {
-    const signerHeaders = signers[i][1];
+    let signerHeaders = signers[i][1];
+    
+    // Convert signerHeaders from cbor2 format if needed
+    if (signerHeaders && typeof signerHeaders === 'object' && signerHeaders.data && Array.isArray(signerHeaders.data)) {
+      signerHeaders = Buffer.from(signerHeaders.data);
+    }
+    
     // Check if signerHeaders is a Map or needs to be decoded
     let headerMap = signerHeaders;
     if (!(signerHeaders instanceof Map)) {
@@ -537,7 +569,13 @@ function getSigner(signers: any[][], verifier: COSEVerifier): any[] | undefined 
     }
     
     if (headerMap instanceof Map && headerMap.has && headerMap.has(common.HeaderParameters.kid)) {
-      const kid = headerMap.get(common.HeaderParameters.kid);
+      let kid = headerMap.get(common.HeaderParameters.kid);
+      
+      // Convert kid from cbor2 format if needed
+      if (kid && typeof kid === 'object' && kid.data && Array.isArray(kid.data)) {
+        kid = Buffer.from(kid.data);
+      }
+      
       if (kid && Buffer.isBuffer(kid) && verifier.key.kid) {
         if (kid.equals(Buffer.from(verifier.key.kid, 'utf8'))) {
           return signers[i];
@@ -559,38 +597,49 @@ function getSigner(signers: any[][], verifier: COSEVerifier): any[] | undefined 
   return undefined;
 }
 
-function getCommonParameter(first: Map<number, any> | Buffer, second: Map<number, any> | Buffer, parameter: number): any {
+function getCommonParameter(first: Map<number, any> | Buffer | any, second: Map<number, any> | Buffer | any, parameter: number): any {
   let result: any;
+  
+  // Handle first parameter
   if (first instanceof Map && first.get) {
     result = first.get(parameter);
+  } else if (first && typeof first === 'object' && !Buffer.isBuffer(first)) {
+    // Handle plain objects that might come from cbor2
+    result = first[parameter];
   }
-  if (!result && second instanceof Map && second.get) {
+  
+  // Handle second parameter if result not found
+  if (result === undefined && second instanceof Map && second.get) {
     result = second.get(parameter);
+  } else if (result === undefined && second && typeof second === 'object' && !Buffer.isBuffer(second)) {
+    // Handle plain objects that might come from cbor2
+    result = second[parameter];
   }
+  
   return result;
 }
 
 export async function verify(payload: Buffer, verifier: COSEVerifier, options?: COSEOptions): Promise<Buffer> {
   options = options || {};
-  const obj = cbor.decode(payload);
+  const obj = decode(payload);
   return verifyInternal(verifier, options, obj);
 }
 
 export function verifySync(payload: Buffer, verifier: COSEVerifier, options?: COSEOptions): Buffer {
   options = options || {};
-  const obj = cbor.decode(payload);
+  const obj = decode(payload);
   return verifyInternal(verifier, options, obj);
 }
 
 function verifyInternal(verifier: COSEVerifier, options: COSEOptions, obj: any): Buffer {
   options = options || {};
   let type = options.defaultType ? options.defaultType : SignTag;
-  if (obj instanceof Tagged) {
+  if (obj instanceof cbor.Tag) {
     if (obj.tag !== SignTag && obj.tag !== Sign1Tag) {
       throw new Error('Unexpected cbor tag, \'' + obj.tag + '\'');
     }
-    type = obj.tag;
-    obj = obj.value;
+    type = Number(obj.tag);
+    obj = obj.contents;
   }
 
   if (!Array.isArray(obj)) {
@@ -606,17 +655,38 @@ function verifyInternal(verifier: COSEVerifier, options: COSEOptions, obj: any):
   // Ensure p and plaintext are Buffers
   if (Array.isArray(p)) {
     p = Buffer.from(p);
+  } else if (p && typeof p === 'object' && p.data && Array.isArray(p.data)) {
+    // Handle cbor2 format: { data: [...], type: 'Buffer' }
+    p = Buffer.from(p.data);
+  } else if (!Buffer.isBuffer(p)) {
+    console.log('DEBUG: p is not a Buffer, type:', typeof p, 'value:', p);
+    p = Buffer.alloc(0); // Convert to empty buffer if not a buffer
   }
   if (Array.isArray(plaintext)) {
     plaintext = Buffer.from(plaintext);
+  } else if (plaintext && typeof plaintext === 'object' && plaintext.data && Array.isArray(plaintext.data)) {
+    // Handle cbor2 format: { data: [...], type: 'Buffer' }
+    plaintext = Buffer.from(plaintext.data);
   }
 
   if (type === SignTag && !Array.isArray(signers)) {
     throw new Error('Expecting signature Array');
   }
 
-  const pMap = (!p.length) ? EMPTY_BUFFER : cbor.decode(p);
-  u = (!u.size) ? EMPTY_BUFFER : u;
+  const pMap = (!p.length) ? new Map() : decode(p);
+  
+  // Handle the case where u might be a plain object from cbor2
+  if (u && typeof u === 'object' && !u.size && !Buffer.isBuffer(u)) {
+    // Convert plain object to Map if needed
+    if (!(u instanceof Map)) {
+      const uMap = new Map();
+      for (const [key, value] of Object.entries(u)) {
+        uMap.set(Number(key), value);
+      }
+      u = uMap;
+    }
+  }
+  u = (!u || (u instanceof Map && !u.size)) ? new Map() : u;
 
   const signer = (type === SignTag ? getSigner(signers, verifier) : signers);
 
@@ -631,15 +701,21 @@ function verifyInternal(verifier: COSEVerifier, options: COSEOptions, obj: any):
     // Ensure signerP and sig are Buffers
     if (Array.isArray(signerP)) {
       signerP = Buffer.from(signerP);
+    } else if (signerP && typeof signerP === 'object' && signerP.data && Array.isArray(signerP.data)) {
+      // Handle cbor2 format: { data: [...], type: 'Buffer' }
+      signerP = Buffer.from(signerP.data);
     }
     if (Array.isArray(sig)) {
       sig = Buffer.from(sig);
+    } else if (sig && typeof sig === 'object' && sig.data && Array.isArray(sig.data)) {
+      // Handle cbor2 format: { data: [...], type: 'Buffer' }
+      sig = Buffer.from(sig.data);
     }
     
     signerP = (!signerP.length) ? EMPTY_BUFFER : signerP;
-    const encodedP = (!(pMap as Map<number, any>).size) ? EMPTY_BUFFER : cbor.encode(pMap);
-    const signerPMap = cbor.decode(signerP);
-    const alg = signerPMap.get(common.HeaderParameters.alg);
+    const encodedP = (!(pMap as any).size && !(typeof pMap === 'object' && Object.keys(pMap).length)) ? EMPTY_BUFFER : encode(pMap);
+    const signerPMap = decode(signerP);
+    const alg = getCommonParameter(signerPMap, {}, common.HeaderParameters.alg);
     const SigStructure = [
       'Signature',
       encodedP,
@@ -656,10 +732,13 @@ function verifyInternal(verifier: COSEVerifier, options: COSEOptions, obj: any):
     let signature = signer;
     if (Array.isArray(signature)) {
       signature = Buffer.from(signature);
+    } else if (signature && typeof signature === 'object' && signature.data && Array.isArray(signature.data)) {
+      // Handle cbor2 format: { data: [...], type: 'Buffer' }
+      signature = Buffer.from(signature.data);
     }
 
     const alg = getCommonParameter(pMap, u, common.HeaderParameters.alg);
-    const encodedP = (!(pMap as Map<number, any>).size) ? EMPTY_BUFFER : cbor.encode(pMap);
+    const encodedP = (!(pMap as any).size && !(typeof pMap === 'object' && Object.keys(pMap).length)) ? EMPTY_BUFFER : encode(pMap);
     const SigStructure = [
       'Signature1',
       encodedP,

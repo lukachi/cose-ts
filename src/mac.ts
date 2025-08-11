@@ -1,11 +1,20 @@
-import * as cbor from 'cbor-x';
+import * as cbor from 'cbor2';
 // @ts-ignore
 import { create as createMac } from 'aes-cbc-mac';
 import * as crypto from 'crypto';
 import * as common from './common.js';
 import type { COSEHeaders, COSERecipient, COSEOptions } from './types.js';
 
-const Tagged = cbor.Tag;
+// Wrapper functions for CBOR operations with canonical encoding
+function encode(data: any): Buffer {
+  const encoded = cbor.encode(data, cbor.dcborEncodeOptions);
+  return Buffer.from(encoded);
+}
+
+function decode(data: Buffer): any {
+  return cbor.decode(new Uint8Array(data));
+}
+
 const EMPTY_BUFFER = common.EMPTY_BUFFER;
 
 export const MAC0Tag = 17;
@@ -70,7 +79,7 @@ function doMac(context: string, p: Buffer, externalAAD: Buffer, payload: Buffer,
       payload // bstr
     ];
 
-    const toBeMACed = cbor.encode(MACstructure);
+    const toBeMACed = encode(MACstructure);
     if (alg === 'aes-cbc-mac-64') {
       const mac = createMac(key, toBeMACed, 8);
       resolve(mac);
@@ -112,12 +121,12 @@ export async function create(
       throw new Error('There has to be at least one recipient');
     }
 
-    const predictableP = (!pMap.size) ? EMPTY_BUFFER : cbor.encode(pMap);
+    const predictableP = (!pMap.size) ? EMPTY_BUFFER : encode(pMap);
     let encodedP: Buffer;
     if (pMap.size === 0 && options.encodep === 'empty') {
       encodedP = EMPTY_BUFFER;
     } else {
-      encodedP = cbor.encode(pMap);
+      encodedP = encode(pMap);
     }
     // TODO check crit headers
     if (recipients.length > 1) {
@@ -129,19 +138,19 @@ export async function create(
     const ru = common.TranslateHeaders(recipient.u || {});
     const rp = EMPTY_BUFFER;
     const maced = [encodedP, uMap, payload, tag, [[rp, ru, EMPTY_BUFFER]]];
-    return cbor.encode(options.excludetag ? maced : new Tagged(maced, MACTag));
+    return encode(options.excludetag ? maced : new cbor.Tag(MACTag, maced));
   } else {
-    const predictableP = (!pMap.size) ? EMPTY_BUFFER : cbor.encode(pMap);
+    const predictableP = (!pMap.size) ? EMPTY_BUFFER : encode(pMap);
     let encodedP: Buffer;
     if (pMap.size === 0 && options.encodep === 'empty') {
       encodedP = EMPTY_BUFFER;
     } else {
-      encodedP = cbor.encode(pMap);
+      encodedP = encode(pMap);
     }
     let tag = await doMac('MAC0', predictableP, externalAAD, payload, COSEAlgToNodeAlg[AlgFromTags[alg]], recipients.key as Buffer);
     tag = tag.slice(0, CutTo[alg]);
     const maced = [encodedP, uMap, payload, tag];
-    return cbor.encode(options.excludetag ? maced : new Tagged(maced, MAC0Tag));
+    return encode(options.excludetag ? maced : new cbor.Tag(MAC0Tag, maced));
   }
 }
 
@@ -149,15 +158,15 @@ export async function read(data: Buffer, key: Buffer, externalAAD?: Buffer, opti
   options = options || {};
   externalAAD = externalAAD || EMPTY_BUFFER;
 
-  let obj = cbor.decode(data);
+  let obj = decode(data);
 
   let type = options.defaultType ? options.defaultType : MAC0Tag;
-  if (obj instanceof Tagged) {
+  if (obj instanceof cbor.Tag) {
     if (obj.tag !== MAC0Tag && obj.tag !== MACTag) {
       throw new Error('Unexpected cbor tag, \'' + obj.tag + '\'');
     }
-    type = obj.tag;
-    obj = obj.value;
+    type = Number(obj.tag);
+    obj = obj.contents;
   }
 
   if (!Array.isArray(obj)) {
@@ -172,13 +181,13 @@ export async function read(data: Buffer, key: Buffer, externalAAD?: Buffer, opti
   }
 
   let [p, u, payload, tag] = obj;
-  let pMap = (!p.length) ? EMPTY_BUFFER : cbor.decode(p);
-  pMap = (!pMap.size) ? EMPTY_BUFFER : pMap;
+  let pMap = (!p.length) ? EMPTY_BUFFER : decode(p);
+  pMap = (!(pMap as Map<number, any>).size) ? EMPTY_BUFFER : pMap;
   u = (!u.size) ? EMPTY_BUFFER : u;
 
   // TODO validate protected header
-  const alg = (pMap !== EMPTY_BUFFER) ? pMap.get(common.HeaderParameters.alg) : (u !== EMPTY_BUFFER) ? u.get(common.HeaderParameters.alg) : undefined;
-  const encodedP = (!pMap.size) ? EMPTY_BUFFER : cbor.encode(pMap);
+  const alg = (pMap !== EMPTY_BUFFER) ? (pMap as Map<number, any>).get(common.HeaderParameters.alg) : (u !== EMPTY_BUFFER) ? u.get(common.HeaderParameters.alg) : undefined;
+  const encodedP = (!(pMap as Map<number, any>).size) ? EMPTY_BUFFER : encode(pMap);
   if (!AlgFromTags[alg]) {
     throw new Error('Unknown algorithm, ' + alg);
   }

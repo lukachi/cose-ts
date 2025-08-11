@@ -1,11 +1,19 @@
-import * as cbor from 'cbor-x';
+import * as cbor from 'cbor2';
 import * as crypto from 'crypto';
 import * as common from './common.js';
 import { hkdf } from '@noble/hashes/hkdf';
 import { sha256, sha512 } from '@noble/hashes/sha2';
 import type { COSEHeaders, COSERecipient, COSEOptions, COSEKey } from './types.js';
 
-const Tagged = cbor.Tag;
+// Wrapper functions for CBOR operations with canonical encoding
+function encode(data: any): Buffer {
+  const encoded = cbor.encode(data, cbor.dcborEncodeOptions);
+  return Buffer.from(encoded);
+}
+
+function decode(data: Buffer): any {
+  return cbor.decode(new Uint8Array(data));
+}
 
 const EMPTY_BUFFER = common.EMPTY_BUFFER;
 export const EncryptTag = 96;
@@ -162,13 +170,13 @@ function usesECDHKeyAgreement(recipient: COSERecipient): boolean {
 }
 
 function createAAD(p: Map<number, any>, context: string, externalAAD: Buffer): Buffer {
-  const pEncoded = (!p.size) ? EMPTY_BUFFER : cbor.encode(p);
+  const pEncoded = (!p.size) ? EMPTY_BUFFER : encode(p);
   const encStructure = [
     context,
     pEncoded,
     externalAAD
   ];
-  return cbor.encode(encStructure);
+  return encode(encStructure);
 }
 
 function _randomSource(bytes: number): Buffer {
@@ -190,21 +198,21 @@ function nodeEncrypt(payload: Buffer, key: Buffer, alg: number, iv: Buffer, aad:
 }
 
 function createContext(rp: Buffer, alg: number, partyUNonce?: Buffer | null): Buffer {
-  return cbor.encode([
-    alg, // AlgorithmID
-    [ // PartyUInfo
-      null, // identity
-      (partyUNonce || null), // nonce
-      null // other
-    ],
-    [ // PartyVInfo
-      null, // identity
-      null, // nonce
-      null // other
+  return encode([
+    alg,
+    [
+      null,
+      (partyUNonce || null),
+      null
     ],
     [
-      keyLength[alg] * 8, // keyDataLength
-      rp // protected
+      null,
+      null,
+      null
+    ],
+    [
+      keyLength[alg] * 8,
+      rp
     ]
   ]);
 }
@@ -279,7 +287,7 @@ export function create(headers: COSEHeaders, payload: Buffer, recipients: COSERe
             y: senderPublicKey.slice(keyLength[recipientKey.crv!] + 1, keyLength[recipientKey.crv!] * 2 + 1),
             kty: 'EC2'
           });
-          const rp = cbor.encode(common.TranslateHeaders(recipients[0].p!));
+          const rp = encode(common.TranslateHeaders(recipients[0].p!));
           const ikm = generated.computeSecret(recipientPublicKey);
           let partyUNonce: Buffer | null = null;
           if (recipientAlg === 'ECDH-SS' || recipientAlg === 'ECDH-SS-512') {
@@ -323,11 +331,11 @@ export function create(headers: COSEHeaders, payload: Buffer, recipients: COSERe
         if (pMap.size === 0 && options.encodep === 'empty') {
           encodedP = EMPTY_BUFFER;
         } else {
-          encodedP = cbor.encode(pMap);
+          encodedP = encode(pMap);
         }
 
         const encrypted = [encodedP, uMap, ciphertext, recipientStruct];
-        resolve(cbor.encode(options.excludetag ? encrypted : new Tagged(encrypted, EncryptTag)));
+        resolve(encode(options.excludetag ? encrypted : new cbor.Tag(EncryptTag, encrypted)));
       } else {
         let iv: Buffer;
         if (options.contextIv) {
@@ -355,10 +363,10 @@ export function create(headers: COSEHeaders, payload: Buffer, recipients: COSERe
         if (pMap.size === 0 && options.encodep === 'empty') {
           encodedP = EMPTY_BUFFER;
         } else {
-          encodedP = cbor.encode(pMap);
+          encodedP = encode(pMap);
         }
         const encrypted = [encodedP, uMap, ciphertext];
-        resolve(cbor.encode(options.excludetag ? encrypted : new Tagged(encrypted, Encrypt0Tag)));
+        resolve(encode(options.excludetag ? encrypted : new cbor.Tag(Encrypt0Tag, encrypted)));
       }
     } catch (error) {
       reject(error);
@@ -380,14 +388,14 @@ function nodeDecrypt(ciphertext: Buffer, key: Buffer, alg: number, iv: Buffer, t
 export async function read(data: Buffer, key: Buffer, options?: COSEOptions): Promise<Buffer> {
   options = options || {};
   const externalAAD = options.externalAAD || EMPTY_BUFFER;
-  let obj = cbor.decode(data);
+  let obj = decode(data);
   let msgTag = options.defaultType ? options.defaultType : EncryptTag;
-  if (obj instanceof Tagged) {
+  if (obj instanceof cbor.Tag) {
     if (obj.tag !== EncryptTag && obj.tag !== Encrypt0Tag) {
       throw new Error('Unknown tag, ' + obj.tag);
     }
-    msgTag = obj.tag;
-    obj = obj.value;
+    msgTag = Number(obj.tag);
+    obj = obj.contents;
   }
 
   if (!Array.isArray(obj)) {
@@ -407,28 +415,82 @@ export async function read(data: Buffer, key: Buffer, options?: COSEOptions): Pr
   // Ensure p is a Buffer 
   if (Array.isArray(p)) {
     p = Buffer.from(p);
+  } else if (p && typeof p === 'object' && p.data && Array.isArray(p.data)) {
+    // Handle cbor2 format: { data: [...], type: 'Buffer' }
+    p = Buffer.from(p.data);
+  } else if (!Buffer.isBuffer(p)) {
+    p = Buffer.alloc(0); // Convert to empty buffer if not a buffer
   }
 
   // Ensure ciphertext is a Buffer
   if (Array.isArray(ciphertext)) {
     ciphertext = Buffer.from(ciphertext);
+  } else if (ciphertext && typeof ciphertext === 'object' && ciphertext.data && Array.isArray(ciphertext.data)) {
+    // Handle cbor2 format: { data: [...], type: 'Buffer' }
+    ciphertext = Buffer.from(ciphertext.data);
   }
 
-  const pMap = (p.length === 0) ? EMPTY_BUFFER : cbor.decode(p);
-  const pDecoded = (!(pMap as Map<number, any>).size) ? EMPTY_BUFFER : pMap;
-  const uDecoded = (!u.size) ? EMPTY_BUFFER : u;
+  const pMap = (p.length === 0) ? new Map() : decode(p);
+  
+  // Handle the case where u might be a plain object from cbor2
+  if (u && typeof u === 'object' && !u.size && !Buffer.isBuffer(u)) {
+    // Convert plain object to Map if needed
+    if (!(u instanceof Map)) {
+      const uMap = new Map();
+      for (const [key, value] of Object.entries(u)) {
+        uMap.set(Number(key), value);
+      }
+      u = uMap;
+    }
+  }
+  u = (!u || (u instanceof Map && !u.size)) ? new Map() : u;
 
-  const alg = (pDecoded !== EMPTY_BUFFER) ? (pDecoded as Map<number, any>).get(common.HeaderParameters.alg) : (uDecoded !== EMPTY_BUFFER) ? (uDecoded as Map<number, any>).get(common.HeaderParameters.alg) : undefined;
+  const pDecoded = (!(pMap as any).size && !(typeof pMap === 'object' && Object.keys(pMap).length)) ? new Map() : pMap;
+  const uDecoded = (!u || (u instanceof Map && !u.size)) ? new Map() : u;
+
+  // Extract algorithm using the same getCommonParameter function logic
+  function getCommonParameter(first: Map<number, any> | any, second: Map<number, any> | any, parameter: number): any {
+    let result: any;
+    
+    // Handle first parameter
+    if (first instanceof Map && first.get) {
+      result = first.get(parameter);
+    } else if (first && typeof first === 'object' && !Buffer.isBuffer(first)) {
+      // Handle plain objects that might come from cbor2
+      result = first[parameter];
+    }
+    
+    // Handle second parameter if result not found
+    if (result === undefined && second instanceof Map && second.get) {
+      result = second.get(parameter);
+    } else if (result === undefined && second && typeof second === 'object' && !Buffer.isBuffer(second)) {
+      // Handle plain objects that might come from cbor2
+      result = second[parameter];
+    }
+    
+    return result;
+  }
+
+  const alg = getCommonParameter(pDecoded, uDecoded, common.HeaderParameters.alg);
   if (!TagToAlg[alg]) {
     throw new Error('Unknown or unsupported algorithm ' + alg);
   }
 
-  let iv = (uDecoded as Map<number, any>).get(common.HeaderParameters.IV);
-  const partialIv = (uDecoded as Map<number, any>).get(common.HeaderParameters.Partial_IV);
+  let iv = getCommonParameter(null, uDecoded, common.HeaderParameters.IV);
+  let partialIv = getCommonParameter(null, uDecoded, common.HeaderParameters.Partial_IV);
   
-  // Ensure iv is a Buffer if it exists
-  if (iv && Array.isArray(iv)) {
+  // Convert iv from cbor2 format if needed
+  if (iv && typeof iv === 'object' && iv.data && Array.isArray(iv.data)) {
+    iv = Buffer.from(iv.data);
+  } else if (iv && Array.isArray(iv)) {
     iv = Buffer.from(iv);
+  }
+  
+  // Convert partialIv from cbor2 format if needed  
+  if (partialIv && typeof partialIv === 'object' && partialIv.data && Array.isArray(partialIv.data)) {
+    partialIv = Buffer.from(partialIv.data);
+  } else if (partialIv && Array.isArray(partialIv)) {
+    partialIv = Buffer.from(partialIv);
   }
   
   if (iv && partialIv) {

@@ -41,7 +41,6 @@
     "@noble/hashes": "^1.8.0",
     "aes-cbc-mac": "^1.0.1",
     "cbor": "^8.1.0",
-    "cbor-x": "^1.6.0",
     "cbor2": "^2.0.1",
     "jsrsasign": "^11.1.0"
   },
