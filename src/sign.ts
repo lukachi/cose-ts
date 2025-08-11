@@ -2,18 +2,24 @@
 /* jslint node: true */
 'use strict';
 
-const cbor = require('cbor');
-const EC = require('elliptic').ec;
-const crypto = require('crypto');
-const NodeRSA = require('node-rsa');
-const common = require('./common');
+import * as cbor from 'cbor';
+import { ec as EC } from 'elliptic';
+import * as crypto from 'crypto';
+import NodeRSA from 'node-rsa';
+import * as common from './common.js';
+import type { COSEHeaders, COSESigner, COSEVerifier, COSEOptions, AlgorithmInfo, NodeAlgorithm } from './types.js';
+
 const EMPTY_BUFFER = common.EMPTY_BUFFER;
 const Tagged = cbor.Tagged;
 
-const SignTag = exports.SignTag = 98;
-const Sign1Tag = exports.Sign1Tag = 18;
+export const SignTag = 98;
+export const Sign1Tag = 18;
 
-const AlgFromTags = {};
+interface AlgFromTagsMap {
+  [key: number]: AlgorithmInfo;
+}
+
+const AlgFromTags: AlgFromTagsMap = {};
 AlgFromTags[-7] = { sign: 'ES256', digest: 'SHA-256' };
 AlgFromTags[-35] = { sign: 'ES384', digest: 'SHA-384' };
 AlgFromTags[-36] = { sign: 'ES512', digest: 'SHA-512' };
@@ -24,7 +30,11 @@ AlgFromTags[-257] = { sign: 'RS256', digest: 'SHA-256' };
 AlgFromTags[-258] = { sign: 'RS384', digest: 'SHA-384' };
 AlgFromTags[-259] = { sign: 'RS512', digest: 'SHA-512' };
 
-const COSEAlgToNodeAlg = {
+interface COSEAlgToNodeAlgMap {
+  [key: string]: NodeAlgorithm;
+}
+
+const COSEAlgToNodeAlg: COSEAlgToNodeAlgMap = {
   ES256: { sign: 'p256', digest: 'sha256' },
   ES384: { sign: 'p384', digest: 'sha384' },
   ES512: { sign: 'p521', digest: 'sha512' },
@@ -36,7 +46,7 @@ const COSEAlgToNodeAlg = {
   PS512: { alg: 'pss-sha512', saltLen: 64 }
 };
 
-function doSign (SigStructure, signer, alg) {
+function doSign(SigStructure: any[], signer: COSESigner, alg: number): Buffer {
   if (!AlgFromTags[alg]) {
     throw new Error('Unknown algorithm, ' + alg);
   }
@@ -46,47 +56,49 @@ function doSign (SigStructure, signer, alg) {
 
   let ToBeSigned = cbor.encode(SigStructure);
 
-  let sig;
+  let sig: Buffer;
   if (AlgFromTags[alg].sign.startsWith('ES')) {
-    const hash = crypto.createHash(COSEAlgToNodeAlg[AlgFromTags[alg].sign].digest);
+    const hash = crypto.createHash(COSEAlgToNodeAlg[AlgFromTags[alg].sign].digest!);
     hash.update(ToBeSigned);
     ToBeSigned = hash.digest();
-    const ec = new EC(COSEAlgToNodeAlg[AlgFromTags[alg].sign].sign);
-    const key = ec.keyFromPrivate(signer.key.d);
+    const ec = new EC(COSEAlgToNodeAlg[AlgFromTags[alg].sign].sign!);
+    const key = ec.keyFromPrivate(signer.key.d!);
     const signature = key.sign(ToBeSigned);
     const bitLength = Math.ceil(ec.curve._bitLength / 8);
     sig = Buffer.concat([signature.r.toArrayLike(Buffer, undefined, bitLength), signature.s.toArrayLike(Buffer, undefined, bitLength)]);
   } else if (AlgFromTags[alg].sign.startsWith('PS')) {
-    signer.key.dmp1 = signer.key.dp;
-    signer.key.dmq1 = signer.key.dq;
-    signer.key.coeff = signer.key.qi;
+    const signerKey = { ...signer.key };
+    (signerKey as any).dmp1 = signerKey.dp;
+    (signerKey as any).dmq1 = signerKey.dq;
+    (signerKey as any).coeff = signerKey.qi;
     const key = new NodeRSA().importKey(signer.key, 'components-private');
     key.setOptions({
       signingScheme: {
-        scheme: COSEAlgToNodeAlg[AlgFromTags[alg].sign].alg.split('-')[0],
-        hash: COSEAlgToNodeAlg[AlgFromTags[alg].sign].alg.split('-')[1],
+        scheme: COSEAlgToNodeAlg[AlgFromTags[alg].sign].alg!.split('-')[0],
+        hash: COSEAlgToNodeAlg[AlgFromTags[alg].sign].alg!.split('-')[1],
         saltLength: COSEAlgToNodeAlg[AlgFromTags[alg].sign].saltLen
       }
     });
     sig = key.sign(ToBeSigned);
   } else {
-    const sign = crypto.createSign(COSEAlgToNodeAlg[AlgFromTags[alg].sign].sign);
+    const sign = crypto.createSign(COSEAlgToNodeAlg[AlgFromTags[alg].sign].sign!);
     sign.update(ToBeSigned);
     sign.end();
-    sig = sign.sign(signer.key);
+    sig = sign.sign(signer.key as any);
   }
   return sig;
 }
 
-exports.create = function (headers, payload, signers, options) {
+export function create(headers: COSEHeaders, payload: Buffer, signers: COSESigner[] | COSESigner, options?: COSEOptions): Promise<Buffer> {
   options = options || {};
   let u = headers.u || {};
   let p = headers.p || {};
 
-  p = common.TranslateHeaders(p);
-  u = common.TranslateHeaders(u);
-  let bodyP = p || {};
-  bodyP = (bodyP.size === 0) ? EMPTY_BUFFER : cbor.encode(bodyP);
+  const pMap = common.TranslateHeaders(p);
+  const uMap = common.TranslateHeaders(u);
+  let bodyP = pMap || new Map();
+  let bodyPEncoded = (bodyP.size === 0) ? EMPTY_BUFFER : cbor.encode(bodyP);
+  
   if (Array.isArray(signers)) {
     if (signers.length === 0) {
       throw new Error('There has to be at least one signer');
@@ -100,49 +112,51 @@ exports.create = function (headers, payload, signers, options) {
     let signerP = signer.p || {};
     let signerU = signer.u || {};
 
-    signerP = common.TranslateHeaders(signerP);
-    signerU = common.TranslateHeaders(signerU);
-    const alg = signerP.get(common.HeaderParameters.alg);
-    signerP = (signerP.size === 0) ? EMPTY_BUFFER : cbor.encode(signerP);
+    const signerPMap = common.TranslateHeaders(signerP);
+    const signerUMap = common.TranslateHeaders(signerU);
+    const alg = signerPMap.get(common.HeaderParameters.alg);
+    const signerPEncoded = (signerPMap.size === 0) ? EMPTY_BUFFER : cbor.encode(signerPMap);
 
     const SigStructure = [
       'Signature',
-      bodyP,
-      signerP,
+      bodyPEncoded,
+      signerPEncoded,
       externalAAD,
       payload
     ];
 
     const sig = doSign(SigStructure, signer, alg);
-    if (p.size === 0 && options.encodep === 'empty') {
-      p = EMPTY_BUFFER;
+    let encodedP: Buffer;
+    if (pMap.size === 0 && options.encodep === 'empty') {
+      encodedP = EMPTY_BUFFER;
     } else {
-      p = cbor.encode(p);
+      encodedP = cbor.encode(pMap);
     }
-    const signed = [p, u, payload, [[signerP, signerU, sig]]];
+    const signed = [encodedP, uMap, payload, [[signerPEncoded, signerUMap, sig]]];
     return cbor.encodeAsync(options.excludetag ? signed : new Tagged(SignTag, signed));
   } else {
     const signer = signers;
     const externalAAD = signer.externalAAD || EMPTY_BUFFER;
-    const alg = p.get(common.HeaderParameters.alg) || u.get(common.HeaderParameters.alg);
+    const alg = pMap.get(common.HeaderParameters.alg) || uMap.get(common.HeaderParameters.alg);
     const SigStructure = [
       'Signature1',
-      bodyP,
+      bodyPEncoded,
       externalAAD,
       payload
     ];
     const sig = doSign(SigStructure, signer, alg);
-    if (p.size === 0 && options.encodep === 'empty') {
-      p = EMPTY_BUFFER;
+    let encodedP: Buffer;
+    if (pMap.size === 0 && options.encodep === 'empty') {
+      encodedP = EMPTY_BUFFER;
     } else {
-      p = cbor.encode(p);
+      encodedP = cbor.encode(pMap);
     }
-    const signed = [p, u, payload, sig];
+    const signed = [encodedP, uMap, payload, sig];
     return cbor.encodeAsync(options.excludetag ? signed : new Tagged(Sign1Tag, signed), { canonical: true });
   }
-};
+}
 
-function doVerify (SigStructure, verifier, alg, sig) {
+function doVerify(SigStructure: any[], verifier: COSEVerifier, alg: number, sig: Buffer): void {
   if (!AlgFromTags[alg]) {
     throw new Error('Unknown algorithm, ' + alg);
   }
@@ -153,23 +167,23 @@ function doVerify (SigStructure, verifier, alg, sig) {
   const ToBeSigned = cbor.encode(SigStructure);
 
   if (AlgFromTags[alg].sign.startsWith('ES')) {
-    const hash = crypto.createHash(nodeAlg.digest);
+    const hash = crypto.createHash(nodeAlg.digest!);
     hash.update(ToBeSigned);
     const msgHash = hash.digest();
 
     const pub = { x: verifier.key.x, y: verifier.key.y };
-    const ec = new EC(nodeAlg.sign);
+    const ec = new EC(nodeAlg.sign!);
     const key = ec.keyFromPublic(pub);
-    sig = { r: sig.slice(0, sig.length / 2), s: sig.slice(sig.length / 2) };
-    if (!key.verify(msgHash, sig)) {
+    const sigObj = { r: sig.slice(0, sig.length / 2), s: sig.slice(sig.length / 2) };
+    if (!key.verify(msgHash, sigObj)) {
       throw new Error('Signature missmatch');
     }
   } else if (AlgFromTags[alg].sign.startsWith('PS')) {
     const key = new NodeRSA().importKey(verifier.key, 'components-public');
     key.setOptions({
       signingScheme: {
-        scheme: COSEAlgToNodeAlg[AlgFromTags[alg].sign].alg.split('-')[0],
-        hash: COSEAlgToNodeAlg[AlgFromTags[alg].sign].alg.split('-')[1],
+        scheme: COSEAlgToNodeAlg[AlgFromTags[alg].sign].alg!.split('-')[0],
+        hash: COSEAlgToNodeAlg[AlgFromTags[alg].sign].alg!.split('-')[1],
         saltLength: COSEAlgToNodeAlg[AlgFromTags[alg].sign].saltLen
       }
     });
@@ -177,47 +191,48 @@ function doVerify (SigStructure, verifier, alg, sig) {
       throw new Error('Signature missmatch');
     }
   } else {
-    const verify = crypto.createVerify(nodeAlg.sign);
+    const verify = crypto.createVerify(nodeAlg.sign!);
     verify.update(ToBeSigned);
-    if (!verify.verify(verifier.key, sig)) {
+    if (!verify.verify(verifier.key as any, sig)) {
       throw new Error('Signature missmatch');
     }
   }
 }
 
-function getSigner (signers, verifier) {
+function getSigner(signers: any[][], verifier: COSEVerifier): any[] | undefined {
   for (let i = 0; i < signers.length; i++) {
     const kid = signers[i][1].get(common.HeaderParameters.kid); // TODO create constant for header locations
-    if (kid.equals(Buffer.from(verifier.key.kid, 'utf8'))) {
+    if (kid.equals(Buffer.from(verifier.key.kid!, 'utf8'))) {
       return signers[i];
     }
   }
+  return undefined;
 }
 
-function getCommonParameter (first, second, parameter) {
-  let result;
-  if (first.get) {
+function getCommonParameter(first: Map<number, any> | Buffer, second: Map<number, any> | Buffer, parameter: number): any {
+  let result: any;
+  if (first instanceof Map && first.get) {
     result = first.get(parameter);
   }
-  if (!result && second.get) {
+  if (!result && second instanceof Map && second.get) {
     result = second.get(parameter);
   }
   return result;
 }
 
-exports.verify = async function (payload, verifier, options) {
+export async function verify(payload: Buffer, verifier: COSEVerifier, options?: COSEOptions): Promise<Buffer> {
   options = options || {};
   const obj = await cbor.decodeFirst(payload);
   return verifyInternal(verifier, options, obj);
-};
+}
 
-exports.verifySync = function (payload, verifier, options) {
+export function verifySync(payload: Buffer, verifier: COSEVerifier, options?: COSEOptions): Buffer {
   options = options || {};
   const obj = cbor.decodeFirstSync(payload);
   return verifyInternal(verifier, options, obj);
-};
+}
 
-function verifyInternal (verifier, options, obj) {
+function verifyInternal(verifier: COSEVerifier, options: COSEOptions, obj: any): Buffer {
   options = options || {};
   let type = options.defaultType ? options.defaultType : SignTag;
   if (obj instanceof Tagged) {
@@ -242,7 +257,7 @@ function verifyInternal (verifier, options, obj) {
     throw new Error('Expecting signature Array');
   }
 
-  p = (!p.length) ? EMPTY_BUFFER : cbor.decodeFirstSync(p);
+  const pMap = (!p.length) ? EMPTY_BUFFER : cbor.decodeFirstSync(p);
   u = (!u.size) ? EMPTY_BUFFER : u;
 
   const signer = (type === SignTag ? getSigner(signers, verifier) : signers);
@@ -255,12 +270,12 @@ function verifyInternal (verifier, options, obj) {
     const externalAAD = verifier.externalAAD || EMPTY_BUFFER;
     let [signerP, , sig] = signer;
     signerP = (!signerP.length) ? EMPTY_BUFFER : signerP;
-    p = (!p.size) ? EMPTY_BUFFER : cbor.encode(p);
+    const encodedP = (!(pMap as Map<number, any>).size) ? EMPTY_BUFFER : cbor.encode(pMap);
     const signerPMap = cbor.decode(signerP);
     const alg = signerPMap.get(common.HeaderParameters.alg);
     const SigStructure = [
       'Signature',
-      p,
+      encodedP,
       signerP,
       externalAAD,
       plaintext
@@ -270,11 +285,11 @@ function verifyInternal (verifier, options, obj) {
   } else {
     const externalAAD = verifier.externalAAD || EMPTY_BUFFER;
 
-    const alg = getCommonParameter(p, u, common.HeaderParameters.alg);
-    p = (!p.size) ? EMPTY_BUFFER : cbor.encode(p);
+    const alg = getCommonParameter(pMap, u, common.HeaderParameters.alg);
+    const encodedP = (!(pMap as Map<number, any>).size) ? EMPTY_BUFFER : cbor.encode(pMap);
     const SigStructure = [
       'Signature1',
-      p,
+      encodedP,
       externalAAD,
       plaintext
     ];

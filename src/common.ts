@@ -2,7 +2,9 @@
 /* jslint node: true */
 'use strict';
 
-const AlgToTags = {
+import type { AlgToTagsMap, HeaderParametersMap, KeyParametersMap, KeyTypesMap, KeyCrvMap, COSEKey } from './types.js';
+
+const AlgToTags: AlgToTagsMap = {
   PS512: -39,
   PS384: -38,
   PS256: -37,
@@ -51,11 +53,15 @@ const AlgToTags = {
   'AES-CCM-64-256/128': 33
 };
 
-const Translators = {
-  kid: (value) => {
+interface Translator {
+  (value: any): any;
+}
+
+const Translators: { [key: string]: Translator } = {
+  kid: (value: string): Buffer => {
     return Buffer.from(value, 'utf8');
   },
-  alg: (value) => {
+  alg: (value: string): number => {
     if (!(AlgToTags[value])) {
       throw new Error('Unknown \'alg\' parameter, ' + value);
     }
@@ -63,7 +69,7 @@ const Translators = {
   }
 };
 
-const HeaderParameters = {
+const HeaderParameters: HeaderParametersMap = {
   partyUNonce: -22,
   static_key_id: -3,
   static_key: -2,
@@ -79,10 +85,10 @@ const HeaderParameters = {
   x5chain: 33
 };
 
-exports.EMPTY_BUFFER = Buffer.alloc(0);
+export const EMPTY_BUFFER = Buffer.alloc(0);
 
-exports.TranslateHeaders = function (header) {
-  const result = new Map();
+export function TranslateHeaders(header: { [key: string]: any }): Map<number, any> {
+  const result = new Map<number, any>();
   for (const param in header) {
     if (!HeaderParameters[param]) {
       throw new Error('Unknown parameter, \'' + param + '\'');
@@ -96,9 +102,9 @@ exports.TranslateHeaders = function (header) {
     }
   }
   return result;
-};
+}
 
-const KeyParameters = {
+const KeyParameters: KeyParametersMap = {
   crv: -1,
   k: -1,
   x: -2,
@@ -107,14 +113,14 @@ const KeyParameters = {
   kty: 1
 };
 
-const KeyTypes = {
+const KeyTypes: KeyTypesMap = {
   OKP: 1,
   EC2: 2,
   RSA: 3,
   Symmetric: 4
 };
 
-const KeyCrv = {
+const KeyCrv: KeyCrvMap = {
   'P-256': 1,
   'P-384': 2,
   'P-521': 3,
@@ -124,14 +130,14 @@ const KeyCrv = {
   Ed448: 7
 };
 
-const KeyTranslators = {
-  kty: (value) => {
+const KeyTranslators: { [key: string]: Translator } = {
+  kty: (value: string): number => {
     if (!(KeyTypes[value])) {
       throw new Error('Unknown \'kty\' parameter, ' + value);
     }
     return KeyTypes[value];
   },
-  crv: (value) => {
+  crv: (value: string): number => {
     if (!(KeyCrv[value])) {
       throw new Error('Unknown \'crv\' parameter, ' + value);
     }
@@ -139,8 +145,8 @@ const KeyTranslators = {
   }
 };
 
-exports.TranslateKey = function (key) {
-  const result = new Map();
+export function TranslateKey(key: COSEKey): Map<number, any> {
+  const result = new Map<number, any>();
   for (const param in key) {
     if (!KeyParameters[param]) {
       throw new Error('Unknown parameter, \'' + param + '\'');
@@ -152,9 +158,9 @@ exports.TranslateKey = function (key) {
     result.set(KeyParameters[param], value);
   }
   return result;
-};
+}
 
-module.exports.xor = function (a, b) {
+export function xor(a: Buffer, b: Buffer): Buffer {
   const buffer = Buffer.alloc(Math.max(a.length, b.length));
   for (let i = 1; i <= buffer.length; ++i) {
     const av = (a.length - i) < 0 ? 0 : a[a.length - i];
@@ -162,10 +168,10 @@ module.exports.xor = function (a, b) {
     buffer[buffer.length - i] = av ^ bv;
   }
   return buffer;
-};
+}
 
-exports.HeaderParameters = HeaderParameters;
+export { HeaderParameters };
 
-exports.runningInNode = function () {
-  return Object.prototype.toString.call(global.process) === '[object process]';
-};
+export function runningInNode(): boolean {
+  return Object.prototype.toString.call(globalThis.process) === '[object process]';
+}
