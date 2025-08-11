@@ -3,9 +3,11 @@
 'use strict';
 
 import * as cbor from 'cbor';
-import { ec as EC } from 'elliptic';
-import * as crypto from 'crypto';
-import NodeRSA from 'node-rsa';
+import { p256 } from '@noble/curves/p256';
+import { p384 } from '@noble/curves/p384';
+import { p521 } from '@noble/curves/p521';
+import { sha256 } from '@noble/hashes/sha256';
+import { sha384, sha512 } from '@noble/hashes/sha512';
 import * as common from './common.js';
 import type { COSEHeaders, COSESigner, COSEVerifier, COSEOptions, AlgorithmInfo, NodeAlgorithm } from './types.js';
 
@@ -34,23 +36,133 @@ interface COSEAlgToNodeAlgMap {
   [key: string]: NodeAlgorithm;
 }
 
-const COSEAlgToNodeAlg: COSEAlgToNodeAlgMap = {
+const COSEAlgToNobleAlg: COSEAlgToNodeAlgMap = {
   ES256: { sign: 'p256', digest: 'sha256' },
   ES384: { sign: 'p384', digest: 'sha384' },
   ES512: { sign: 'p521', digest: 'sha512' },
-  RS256: { sign: 'RSA-SHA256' },
-  RS384: { sign: 'RSA-SHA384' },
-  RS512: { sign: 'RSA-SHA512' },
-  PS256: { alg: 'pss-sha256', saltLen: 32 },
-  PS384: { alg: 'pss-sha384', saltLen: 48 },
-  PS512: { alg: 'pss-sha512', saltLen: 64 }
+  RS256: { sign: 'RSA-SHA256', digest: 'sha256' },
+  RS384: { sign: 'RSA-SHA384', digest: 'sha384' },
+  RS512: { sign: 'RSA-SHA512', digest: 'sha512' },
+  PS256: { alg: 'pss-sha256', saltLen: 32, digest: 'sha256' },
+  PS384: { alg: 'pss-sha384', saltLen: 48, digest: 'sha384' },
+  PS512: { alg: 'pss-sha512', saltLen: 64, digest: 'sha512' }
 };
+
+// Helper function to get the correct hash function
+function getHashFunction(digest: string): (data: Uint8Array) => Uint8Array {
+  switch (digest) {
+    case 'sha256':
+      return sha256;
+    case 'sha384':
+      return sha384;
+    case 'sha512':
+      return sha512;
+    default:
+      throw new Error(`Unsupported hash algorithm: ${digest}`);
+  }
+}
+
+// Helper function to get the correct curve
+function getCurve(curveName: string) {
+  switch (curveName) {
+    case 'p256':
+      return p256;
+    case 'p384':
+      return p384;
+    case 'p521':
+      return p521;
+    default:
+      throw new Error(`Unsupported curve: ${curveName}`);
+  }
+}
+
+// Helper function for RSA signing (fallback to Web Crypto API if available)
+async function rsaSign(data: Buffer, key: any, algorithm: string): Promise<Buffer> {
+  if (typeof crypto !== 'undefined' && crypto.subtle) {
+    // Use Web Crypto API for RSA operations in browser environments
+    try {
+      const keyData = {
+        kty: 'RSA',
+        n: key.n.toString('base64url'),
+        e: key.e.toString('base64url'),
+        d: key.d.toString('base64url'),
+        p: key.p.toString('base64url'),
+        q: key.q.toString('base64url'),
+        dp: key.dp.toString('base64url'),
+        dq: key.dq.toString('base64url'),
+        qi: key.qi.toString('base64url'),
+      };
+      
+      const cryptoKey = await crypto.subtle.importKey(
+        'jwk',
+        keyData,
+        {
+          name: algorithm.startsWith('PSS') ? 'RSA-PSS' : 'RSASSA-PKCS1-v1_5',
+          hash: algorithm.includes('256') ? 'SHA-256' : algorithm.includes('384') ? 'SHA-384' : 'SHA-512',
+        },
+        false,
+        ['sign']
+      );
+      
+      const signature = await crypto.subtle.sign(
+        algorithm.startsWith('PSS') 
+          ? { name: 'RSA-PSS', saltLength: algorithm.includes('256') ? 32 : algorithm.includes('384') ? 48 : 64 }
+          : { name: 'RSASSA-PKCS1-v1_5' },
+        cryptoKey,
+        new Uint8Array(data)
+      );
+      
+      return Buffer.from(signature);
+    } catch (error) {
+      throw new Error(`RSA signing failed: ${error}`);
+    }
+  } else {
+    throw new Error('RSA operations require Web Crypto API support in browser environments');
+  }
+}
+
+// Helper function for RSA verification
+async function rsaVerify(data: Buffer, signature: Buffer, key: any, algorithm: string): Promise<boolean> {
+  if (typeof crypto !== 'undefined' && crypto.subtle) {
+    try {
+      const keyData = {
+        kty: 'RSA',
+        n: key.n.toString('base64url'),
+        e: key.e.toString('base64url'),
+      };
+      
+      const cryptoKey = await crypto.subtle.importKey(
+        'jwk',
+        keyData,
+        {
+          name: algorithm.startsWith('PSS') ? 'RSA-PSS' : 'RSASSA-PKCS1-v1_5',
+          hash: algorithm.includes('256') ? 'SHA-256' : algorithm.includes('384') ? 'SHA-384' : 'SHA-512',
+        },
+        false,
+        ['verify']
+      );
+      
+      return await crypto.subtle.verify(
+        algorithm.startsWith('PSS') 
+          ? { name: 'RSA-PSS', saltLength: algorithm.includes('256') ? 32 : algorithm.includes('384') ? 48 : 64 }
+          : { name: 'RSASSA-PKCS1-v1_5' },
+        cryptoKey,
+        new Uint8Array(signature),
+        new Uint8Array(data)
+      );
+    } catch (error) {
+      return false;
+    }
+  } else {
+    throw new Error('RSA operations require Web Crypto API support in browser environments');
+  }
+}
 
 function doSign(SigStructure: any[], signer: COSESigner, alg: number): Buffer {
   if (!AlgFromTags[alg]) {
     throw new Error('Unknown algorithm, ' + alg);
   }
-  if (!COSEAlgToNodeAlg[AlgFromTags[alg].sign]) {
+  if (!COSEAlgToNobleAlg[AlgFromTags[alg].sign]) {
     throw new Error('Unsupported algorithm, ' + AlgFromTags[alg].sign);
   }
 
@@ -58,33 +170,74 @@ function doSign(SigStructure: any[], signer: COSESigner, alg: number): Buffer {
 
   let sig: Buffer;
   if (AlgFromTags[alg].sign.startsWith('ES')) {
-    const hash = crypto.createHash(COSEAlgToNodeAlg[AlgFromTags[alg].sign].digest!);
-    hash.update(ToBeSigned);
-    ToBeSigned = hash.digest();
-    const ec = new EC(COSEAlgToNodeAlg[AlgFromTags[alg].sign].sign!);
-    const key = ec.keyFromPrivate(signer.key.d!);
-    const signature = key.sign(ToBeSigned);
-    const bitLength = Math.ceil(ec.curve._bitLength / 8);
-    sig = Buffer.concat([signature.r.toArrayLike(Buffer, undefined, bitLength), signature.s.toArrayLike(Buffer, undefined, bitLength)]);
-  } else if (AlgFromTags[alg].sign.startsWith('PS')) {
-    const signerKey = { ...signer.key };
-    (signerKey as any).dmp1 = signerKey.dp;
-    (signerKey as any).dmq1 = signerKey.dq;
-    (signerKey as any).coeff = signerKey.qi;
-    const key = new NodeRSA().importKey(signer.key, 'components-private');
-    key.setOptions({
-      signingScheme: {
-        scheme: COSEAlgToNodeAlg[AlgFromTags[alg].sign].alg!.split('-')[0],
-        hash: COSEAlgToNodeAlg[AlgFromTags[alg].sign].alg!.split('-')[1],
-        saltLength: COSEAlgToNodeAlg[AlgFromTags[alg].sign].saltLen
-      }
-    });
-    sig = key.sign(ToBeSigned);
+    // Use Noble curves for ECDSA
+    const algInfo = COSEAlgToNobleAlg[AlgFromTags[alg].sign];
+    const hashFunction = getHashFunction(algInfo.digest!);
+    const hashedData = hashFunction(new Uint8Array(ToBeSigned));
+    
+    const curve = getCurve(algInfo.sign!);
+    const privateKey = new Uint8Array(signer.key.d!);
+    
+    // Sign the hashed data
+    const signature = curve.sign(hashedData, privateKey);
+    
+    // Convert to COSE format (r || s)
+    const coordSize = curve === p256 ? 32 : curve === p384 ? 48 : 66; // P-256: 32, P-384: 48, P-521: 66
+    const r = signature.r.toString(16).padStart(coordSize * 2, '0');
+    const s = signature.s.toString(16).padStart(coordSize * 2, '0');
+    
+    sig = Buffer.concat([
+      Buffer.from(r, 'hex'),
+      Buffer.from(s, 'hex')
+    ]);
+  } else if (AlgFromTags[alg].sign.startsWith('PS') || AlgFromTags[alg].sign.startsWith('RS')) {
+    // Use Web Crypto API for RSA operations
+    throw new Error('RSA operations require async support. Use createAsync instead.');
   } else {
-    const sign = crypto.createSign(COSEAlgToNodeAlg[AlgFromTags[alg].sign].sign!);
-    sign.update(ToBeSigned);
-    sign.end();
-    sig = sign.sign(signer.key as any);
+    throw new Error('Unsupported algorithm: ' + AlgFromTags[alg].sign);
+  }
+  return sig;
+}
+
+// Async version for RSA support
+export async function doSignAsync(SigStructure: any[], signer: COSESigner, alg: number): Promise<Buffer> {
+  if (!AlgFromTags[alg]) {
+    throw new Error('Unknown algorithm, ' + alg);
+  }
+  if (!COSEAlgToNobleAlg[AlgFromTags[alg].sign]) {
+    throw new Error('Unsupported algorithm, ' + AlgFromTags[alg].sign);
+  }
+
+  let ToBeSigned = cbor.encode(SigStructure);
+
+  let sig: Buffer;
+  if (AlgFromTags[alg].sign.startsWith('ES')) {
+    // Use Noble curves for ECDSA (same as sync version)
+    const algInfo = COSEAlgToNobleAlg[AlgFromTags[alg].sign];
+    const hashFunction = getHashFunction(algInfo.digest!);
+    const hashedData = hashFunction(new Uint8Array(ToBeSigned));
+    
+    const curve = getCurve(algInfo.sign!);
+    const privateKey = new Uint8Array(signer.key.d!);
+    
+    // Sign the hashed data
+    const signature = curve.sign(hashedData, privateKey);
+    
+    // Convert to COSE format (r || s)
+    const coordSize = curve === p256 ? 32 : curve === p384 ? 48 : 66; // P-256: 32, P-384: 48, P-521: 66
+    const r = signature.r.toString(16).padStart(coordSize * 2, '0');
+    const s = signature.s.toString(16).padStart(coordSize * 2, '0');
+    
+    sig = Buffer.concat([
+      Buffer.from(r, 'hex'),
+      Buffer.from(s, 'hex')
+    ]);
+  } else if (AlgFromTags[alg].sign.startsWith('PS') || AlgFromTags[alg].sign.startsWith('RS')) {
+    // Use Web Crypto API for RSA operations
+    const algInfo = COSEAlgToNobleAlg[AlgFromTags[alg].sign];
+    sig = await rsaSign(ToBeSigned, signer.key, algInfo.alg || algInfo.sign!);
+  } else {
+    throw new Error('Unsupported algorithm: ' + AlgFromTags[alg].sign);
   }
   return sig;
 }
@@ -160,42 +313,90 @@ function doVerify(SigStructure: any[], verifier: COSEVerifier, alg: number, sig:
   if (!AlgFromTags[alg]) {
     throw new Error('Unknown algorithm, ' + alg);
   }
-  const nodeAlg = COSEAlgToNodeAlg[AlgFromTags[alg].sign];
-  if (!nodeAlg) {
+  const nobleAlg = COSEAlgToNobleAlg[AlgFromTags[alg].sign];
+  if (!nobleAlg) {
     throw new Error('Unsupported algorithm, ' + AlgFromTags[alg].sign);
   }
   const ToBeSigned = cbor.encode(SigStructure);
 
   if (AlgFromTags[alg].sign.startsWith('ES')) {
-    const hash = crypto.createHash(nodeAlg.digest!);
-    hash.update(ToBeSigned);
-    const msgHash = hash.digest();
+    // Use Noble curves for ECDSA verification
+    const hashFunction = getHashFunction(nobleAlg.digest!);
+    const msgHash = hashFunction(new Uint8Array(ToBeSigned));
 
-    const pub = { x: verifier.key.x, y: verifier.key.y };
-    const ec = new EC(nodeAlg.sign!);
-    const key = ec.keyFromPublic(pub);
-    const sigObj = { r: sig.slice(0, sig.length / 2), s: sig.slice(sig.length / 2) };
-    if (!key.verify(msgHash, sigObj)) {
-      throw new Error('Signature missmatch');
+    const curve = getCurve(nobleAlg.sign!);
+    const coordSize = curve === p256 ? 32 : curve === p384 ? 48 : 66; // P-256: 32, P-384: 48, P-521: 66
+    
+    // Extract r and s from signature (COSE format is r || s)
+    const r = sig.slice(0, coordSize);
+    const s = sig.slice(coordSize);
+    
+    // Convert public key coordinates to the right format
+    const pubKeyBytes = new Uint8Array(1 + coordSize * 2); // uncompressed format
+    pubKeyBytes[0] = 0x04; // uncompressed point indicator
+    verifier.key.x!.copy(pubKeyBytes, 1);
+    verifier.key.y!.copy(pubKeyBytes, 1 + coordSize);
+    
+    // Convert signature to Uint8Array in the format Noble expects (r || s)
+    const signatureBytes = new Uint8Array(coordSize * 2);
+    r.copy(signatureBytes, 0);
+    s.copy(signatureBytes, coordSize);
+    
+    // Use verify function with raw signature bytes
+    const isValid = curve.verify(signatureBytes, msgHash, pubKeyBytes);
+    
+    if (!isValid) {
+      throw new Error('Signature mismatch');
     }
-  } else if (AlgFromTags[alg].sign.startsWith('PS')) {
-    const key = new NodeRSA().importKey(verifier.key, 'components-public');
-    key.setOptions({
-      signingScheme: {
-        scheme: COSEAlgToNodeAlg[AlgFromTags[alg].sign].alg!.split('-')[0],
-        hash: COSEAlgToNodeAlg[AlgFromTags[alg].sign].alg!.split('-')[1],
-        saltLength: COSEAlgToNodeAlg[AlgFromTags[alg].sign].saltLen
-      }
-    });
-    if (!key.verify(ToBeSigned, sig, 'buffer', 'buffer')) {
-      throw new Error('Signature missmatch');
+  } else if (AlgFromTags[alg].sign.startsWith('PS') || AlgFromTags[alg].sign.startsWith('RS')) {
+    // RSA verification requires async support
+    throw new Error('RSA operations require async support. Use verifyAsync instead.');
+  } else {
+    throw new Error('Unsupported algorithm: ' + AlgFromTags[alg].sign);
+  }
+}
+
+// Async version for RSA support
+export async function doVerifyAsync(SigStructure: any[], verifier: COSEVerifier, alg: number, sig: Buffer): Promise<void> {
+  if (!AlgFromTags[alg]) {
+    throw new Error('Unknown algorithm, ' + alg);
+  }
+  const nobleAlg = COSEAlgToNobleAlg[AlgFromTags[alg].sign];
+  if (!nobleAlg) {
+    throw new Error('Unsupported algorithm, ' + AlgFromTags[alg].sign);
+  }
+  const ToBeSigned = cbor.encode(SigStructure);
+
+  if (AlgFromTags[alg].sign.startsWith('ES')) {
+    // Use Noble curves for ECDSA verification (same as sync version)
+    const hashFunction = getHashFunction(nobleAlg.digest!);
+    const msgHash = hashFunction(new Uint8Array(ToBeSigned));
+
+    const curve = getCurve(nobleAlg.sign!);
+    const coordSize = curve === p256 ? 32 : curve === p384 ? 48 : 66; // P-256: 32, P-384: 48, P-521: 66
+    
+    // Verify signature using the Noble library
+    // Convert public key coordinates to the right format
+    const pubKeyBytes = new Uint8Array(1 + coordSize * 2); // uncompressed format
+    pubKeyBytes[0] = 0x04; // uncompressed point indicator
+    verifier.key.x!.copy(pubKeyBytes, 1);
+    verifier.key.y!.copy(pubKeyBytes, 1 + coordSize);
+    
+    // Create signature in DER format for Noble
+    const sigBytes = new Uint8Array(sig);
+    const isValid = curve.verify(sigBytes, msgHash, pubKeyBytes);
+    
+    if (!isValid) {
+      throw new Error('Signature mismatch');
+    }
+  } else if (AlgFromTags[alg].sign.startsWith('PS') || AlgFromTags[alg].sign.startsWith('RS')) {
+    // Use Web Crypto API for RSA verification
+    const isValid = await rsaVerify(ToBeSigned, sig, verifier.key, nobleAlg.alg || nobleAlg.sign!);
+    if (!isValid) {
+      throw new Error('Signature mismatch');
     }
   } else {
-    const verify = crypto.createVerify(nodeAlg.sign!);
-    verify.update(ToBeSigned);
-    if (!verify.verify(verifier.key as any, sig)) {
-      throw new Error('Signature missmatch');
-    }
+    throw new Error('Unsupported algorithm: ' + AlgFromTags[alg].sign);
   }
 }
 

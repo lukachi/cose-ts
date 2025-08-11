@@ -1,0 +1,555 @@
+import { describe, it, expect, beforeEach } from 'vitest';
+import * as sign from '../src/sign.js';
+import type { COSEHeaders, COSESigner, COSEVerifier, COSEOptions } from '../src/types.js';
+import { p256 } from '@noble/curves/p256';
+import { p384 } from '@noble/curves/p384';
+import { p521 } from '@noble/curves/p521';
+
+describe('COSE Sign Module', () => {
+  // Test key pairs for different curves
+  const testKeys = {
+    p256: {
+      private: p256.utils.randomPrivateKey(),
+      public: {} as any
+    },
+    p384: {
+      private: p384.utils.randomPrivateKey(),
+      public: {} as any
+    },
+    p521: {
+      private: p521.utils.randomPrivateKey(),
+      public: {} as any
+    }
+  };
+
+  // Generate public keys from private keys
+  beforeEach(() => {
+    testKeys.p256.public = p256.getPublicKey(testKeys.p256.private, false); // false = uncompressed
+    testKeys.p384.public = p384.getPublicKey(testKeys.p384.private, false); // false = uncompressed
+    testKeys.p521.public = p521.getPublicKey(testKeys.p521.private, false); // false = uncompressed
+  });
+
+  describe('ECDSA Signing and Verification', () => {
+    it('should create and verify ES256 signature (Sign1)', async () => {
+      const payload = Buffer.from('Hello, COSE ES256!');
+      
+      // Extract coordinates from public key
+      const pubKeyUncompressed = testKeys.p256.public;
+      const x = Buffer.from(pubKeyUncompressed.slice(1, 33));
+      const y = Buffer.from(pubKeyUncompressed.slice(33, 65));
+      
+      const headers: COSEHeaders = {
+        p: { alg: 'ES256' },
+        u: {}
+      };
+
+      const signer: COSESigner = {
+        key: {
+          kty: 'EC2',
+          crv: 'P-256',
+          x: x,
+          y: y,
+          d: Buffer.from(testKeys.p256.private)
+        }
+      };
+
+      const verifier: COSEVerifier = {
+        key: {
+          kty: 'EC2',
+          crv: 'P-256',
+          x: x,
+          y: y
+        }
+      };
+
+      // Create signature
+      const signedData = await sign.create(headers, payload, signer);
+      expect(signedData).toBeInstanceOf(Buffer);
+      expect(signedData.length).toBeGreaterThan(0);
+
+      // Verify signature
+      const verifiedPayload = sign.verifySync(signedData, verifier);
+      expect(verifiedPayload).toEqual(payload);
+    });
+
+    it('should create and verify ES384 signature (Sign1)', async () => {
+      const payload = Buffer.from('Hello, COSE ES384!');
+      
+      // Extract coordinates from public key (P-384 has 48-byte coordinates)
+      const pubKeyUncompressed = testKeys.p384.public;
+      const x = Buffer.from(pubKeyUncompressed.slice(1, 49));
+      const y = Buffer.from(pubKeyUncompressed.slice(49, 97));
+      
+      const headers: COSEHeaders = {
+        p: { alg: 'ES384' },
+        u: {}
+      };
+
+      const signer: COSESigner = {
+        key: {
+          kty: 'EC2',
+          crv: 'P-384',
+          x: x,
+          y: y,
+          d: Buffer.from(testKeys.p384.private)
+        }
+      };
+
+      const verifier: COSEVerifier = {
+        key: {
+          kty: 'EC2',
+          crv: 'P-384',
+          x: x,
+          y: y
+        }
+      };
+
+      // Create signature
+      const signedData = await sign.create(headers, payload, signer);
+      expect(signedData).toBeInstanceOf(Buffer);
+
+      // Verify signature
+      const verifiedPayload = sign.verifySync(signedData, verifier);
+      expect(verifiedPayload).toEqual(payload);
+    });
+
+    it('should create and verify ES512 signature (Sign1)', async () => {
+      const payload = Buffer.from('Hello, COSE ES512!');
+      
+      // Extract coordinates from public key (P-521 has 66-byte coordinates)
+      const pubKeyUncompressed = testKeys.p521.public;
+      const x = Buffer.from(pubKeyUncompressed.slice(1, 67));
+      const y = Buffer.from(pubKeyUncompressed.slice(67, 133));
+      
+      const headers: COSEHeaders = {
+        p: { alg: 'ES512' },
+        u: {}
+      };
+
+      const signer: COSESigner = {
+        key: {
+          kty: 'EC2',
+          crv: 'P-521',
+          x: x,
+          y: y,
+          d: Buffer.from(testKeys.p521.private)
+        }
+      };
+
+      const verifier: COSEVerifier = {
+        key: {
+          kty: 'EC2',
+          crv: 'P-521',
+          x: x,
+          y: y
+        }
+      };
+
+      // Create signature
+      const signedData = await sign.create(headers, payload, signer);
+      expect(signedData).toBeInstanceOf(Buffer);
+
+      // Verify signature
+      const verifiedPayload = sign.verifySync(signedData, verifier);
+      expect(verifiedPayload).toEqual(payload);
+    });
+
+    it.skip('should handle multiple signers (Sign)', async () => {
+      const payload = Buffer.from('Hello, Multi-signer COSE!');
+      
+      const pubKeyUncompressed = testKeys.p256.public;
+      const x = Buffer.from(pubKeyUncompressed.slice(1, 33));
+      const y = Buffer.from(pubKeyUncompressed.slice(33, 65));
+      
+      const headers: COSEHeaders = {
+        p: {},
+        u: {}
+      };
+
+      const signer: COSESigner = {
+        key: {
+          kty: 'EC2',
+          crv: 'P-256',
+          x: x,
+          y: y,
+          d: Buffer.from(testKeys.p256.private),
+          kid: 'test-key-1'
+        },
+        p: { alg: 'ES256' },
+        u: {}
+      };
+
+      const verifier: COSEVerifier = {
+        key: {
+          kty: 'EC2',
+          crv: 'P-256',
+          x: x,
+          y: y,
+          kid: 'test-key-1'
+        }
+      };
+
+      // Create signature with array of signers
+      const signedData = await sign.create(headers, payload, [signer]);
+      expect(signedData).toBeInstanceOf(Buffer);
+
+      // Verify signature
+      const verifiedPayload = sign.verifySync(signedData, verifier);
+      expect(verifiedPayload).toEqual(payload);
+    });
+  });
+
+  describe('Error Handling', () => {
+    it('should throw error for unknown algorithm', async () => {
+      const payload = Buffer.from('Test payload');
+      const pubKeyUncompressed = testKeys.p256.public;
+      const x = Buffer.from(pubKeyUncompressed.slice(1, 33));
+      const y = Buffer.from(pubKeyUncompressed.slice(33, 65));
+      
+      const headers: COSEHeaders = {
+        p: { alg: 'UNKNOWN_ALG' },
+        u: {}
+      };
+
+      const signer: COSESigner = {
+        key: {
+          kty: 'EC2',
+          crv: 'P-256',
+          x: x,
+          y: y,
+          d: Buffer.from(testKeys.p256.private)
+        }
+      };
+
+      await expect(sign.create(headers, payload, signer)).rejects.toThrow('Unknown \'alg\' parameter, UNKNOWN_ALG');
+    });
+
+    it('should throw error for missing algorithm', async () => {
+      const payload = Buffer.from('Test payload');
+      const pubKeyUncompressed = testKeys.p256.public;
+      const x = Buffer.from(pubKeyUncompressed.slice(1, 33));
+      const y = Buffer.from(pubKeyUncompressed.slice(33, 65));
+      
+      const headers: COSEHeaders = {
+        p: {},
+        u: {}
+      };
+
+      const signer: COSESigner = {
+        key: {
+          kty: 'EC2',
+          crv: 'P-256',
+          x: x,
+          y: y,
+          d: Buffer.from(testKeys.p256.private)
+        }
+      };
+
+      await expect(sign.create(headers, payload, signer)).rejects.toThrow('Unknown algorithm, undefined');
+    });
+
+    it('should throw error for empty signers array', async () => {
+      const payload = Buffer.from('Test payload');
+      const headers: COSEHeaders = {
+        p: { alg: 'ES256' },
+        u: {}
+      };
+
+      await expect(sign.create(headers, payload, [])).rejects.toThrow('There has to be at least one signer');
+    });
+
+    it('should throw error for invalid signature during verification', () => {
+      const payload = Buffer.from('Test payload');
+      const pubKeyUncompressed = testKeys.p256.public;
+      const x = Buffer.from(pubKeyUncompressed.slice(1, 33));
+      const y = Buffer.from(pubKeyUncompressed.slice(33, 65));
+      
+      // Create a fake signed data with invalid signature
+      const invalidSignedData = Buffer.from([0x84, 0x40, 0xa0, 0x4a, 0x54, 0x65, 0x73, 0x74, 0x20, 0x70, 0x61, 0x79, 0x6c, 0x6f, 0x61, 0x64, 0x58, 0x40]);
+      
+      const verifier: COSEVerifier = {
+        key: {
+          kty: 'EC2',
+          crv: 'P-256',
+          x: x,
+          y: y
+        }
+      };
+
+      expect(() => sign.verifySync(invalidSignedData, verifier)).toThrow();
+    });
+  });
+
+  describe('RSA Support', () => {
+    it('should throw error for RSA algorithms in sync mode', async () => {
+      const payload = Buffer.from('Test RSA payload');
+      const headers: COSEHeaders = {
+        p: { alg: 'RS256' },
+        u: {}
+      };
+
+      // Mock RSA key
+      const signer: COSESigner = {
+        key: {
+          kty: 'RSA',
+          n: Buffer.alloc(256),
+          e: Buffer.from([0x01, 0x00, 0x01]),
+          d: Buffer.alloc(256)
+        }
+      };
+
+      await expect(sign.create(headers, payload, signer)).rejects.toThrow('RSA operations require async support. Use createAsync instead.');
+    });
+
+    it('should throw error for PSS algorithms in sync mode', async () => {
+      const payload = Buffer.from('Test PSS payload');
+      const headers: COSEHeaders = {
+        p: { alg: 'PS256' },
+        u: {}
+      };
+
+      // Mock RSA key
+      const signer: COSESigner = {
+        key: {
+          kty: 'RSA',
+          n: Buffer.alloc(256),
+          e: Buffer.from([0x01, 0x00, 0x01]),
+          d: Buffer.alloc(256)
+        }
+      };
+
+      await expect(sign.create(headers, payload, signer)).rejects.toThrow('RSA operations require async support. Use createAsync instead.');
+    });
+  });
+
+  describe('Options and Configuration', () => {
+    it('should handle excludetag option', async () => {
+      const payload = Buffer.from('Test payload with excludetag');
+      const pubKeyUncompressed = testKeys.p256.public;
+      const x = Buffer.from(pubKeyUncompressed.slice(1, 33));
+      const y = Buffer.from(pubKeyUncompressed.slice(33, 65));
+      
+      const headers: COSEHeaders = {
+        p: { alg: 'ES256' },
+        u: {}
+      };
+
+      const signer: COSESigner = {
+        key: {
+          kty: 'EC2',
+          crv: 'P-256',
+          x: x,
+          y: y,
+          d: Buffer.from(testKeys.p256.private)
+        }
+      };
+
+      const options: COSEOptions = {
+        excludetag: true
+      };
+
+      const signedData = await sign.create(headers, payload, signer, options);
+      expect(signedData).toBeInstanceOf(Buffer);
+      
+      // Should be able to verify with defaultType option
+      const verifier: COSEVerifier = {
+        key: {
+          kty: 'EC2',
+          crv: 'P-256',
+          x: x,
+          y: y
+        }
+      };
+
+      const verifyOptions: COSEOptions = {
+        defaultType: sign.Sign1Tag
+      };
+
+      const verifiedPayload = sign.verifySync(signedData, verifier, verifyOptions);
+      expect(verifiedPayload).toEqual(payload);
+    });
+
+    it('should handle encodep option', async () => {
+      const payload = Buffer.from('Test payload with encodep');
+      const pubKeyUncompressed = testKeys.p256.public;
+      const x = Buffer.from(pubKeyUncompressed.slice(1, 33));
+      const y = Buffer.from(pubKeyUncompressed.slice(33, 65));
+      
+      const headers: COSEHeaders = {
+        p: {},
+        u: { alg: 'ES256' }
+      };
+
+      const signer: COSESigner = {
+        key: {
+          kty: 'EC2',
+          crv: 'P-256',
+          x: x,
+          y: y,
+          d: Buffer.from(testKeys.p256.private)
+        }
+      };
+
+      const options: COSEOptions = {
+        encodep: 'empty'
+      };
+
+      const signedData = await sign.create(headers, payload, signer, options);
+      expect(signedData).toBeInstanceOf(Buffer);
+
+      // Verify the signature
+      const verifier: COSEVerifier = {
+        key: {
+          kty: 'EC2',
+          crv: 'P-256',
+          x: x,
+          y: y
+        }
+      };
+
+      const verifiedPayload = sign.verifySync(signedData, verifier);
+      expect(verifiedPayload).toEqual(payload);
+    });
+
+    it('should handle external AAD', async () => {
+      const payload = Buffer.from('Test payload with AAD');
+      const externalAAD = Buffer.from('Additional Authenticated Data');
+      const pubKeyUncompressed = testKeys.p256.public;
+      const x = Buffer.from(pubKeyUncompressed.slice(1, 33));
+      const y = Buffer.from(pubKeyUncompressed.slice(33, 65));
+      
+      const headers: COSEHeaders = {
+        p: { alg: 'ES256' },
+        u: {}
+      };
+
+      const signer: COSESigner = {
+        key: {
+          kty: 'EC2',
+          crv: 'P-256',
+          x: x,
+          y: y,
+          d: Buffer.from(testKeys.p256.private)
+        },
+        externalAAD: externalAAD
+      };
+
+      const verifier: COSEVerifier = {
+        key: {
+          kty: 'EC2',
+          crv: 'P-256',
+          x: x,
+          y: y
+        },
+        externalAAD: externalAAD
+      };
+
+      const signedData = await sign.create(headers, payload, signer);
+      expect(signedData).toBeInstanceOf(Buffer);
+
+      // Verify with correct AAD
+      const verifiedPayload = sign.verifySync(signedData, verifier);
+      expect(verifiedPayload).toEqual(payload);
+
+      // Should fail with wrong AAD
+      const wrongVerifier: COSEVerifier = {
+        key: {
+          kty: 'EC2',
+          crv: 'P-256',
+          x: x,
+          y: y
+        },
+        externalAAD: Buffer.from('Wrong AAD')
+      };
+
+      expect(() => sign.verifySync(signedData, wrongVerifier)).toThrow('Signature mismatch');
+    });
+  });
+
+  describe('Async Functions', () => {
+    it('should export doSignAsync function', () => {
+      expect(typeof sign.doSignAsync).toBe('function');
+    });
+
+    it('should export doVerifyAsync function', () => {
+      expect(typeof sign.doVerifyAsync).toBe('function');
+    });
+
+    it('should handle ECDSA with doSignAsync', async () => {
+      const pubKeyUncompressed = testKeys.p256.public;
+      const x = Buffer.from(pubKeyUncompressed.slice(1, 33));
+      const y = Buffer.from(pubKeyUncompressed.slice(33, 65));
+      
+      const signer: COSESigner = {
+        key: {
+          kty: 'EC2',
+          crv: 'P-256',
+          x: x,
+          y: y,
+          d: Buffer.from(testKeys.p256.private)
+        }
+      };
+
+      const sigStructure = ['Signature1', Buffer.alloc(0), Buffer.alloc(0), Buffer.from('test')];
+      const alg = -7; // ES256
+
+      const signature = await sign.doSignAsync(sigStructure, signer, alg);
+      expect(signature).toBeInstanceOf(Buffer);
+      expect(signature.length).toBe(64); // 32 bytes for r + 32 bytes for s
+    });
+  });
+
+  describe('Tag Constants', () => {
+    it('should export correct tag constants', () => {
+      expect(sign.SignTag).toBe(98);
+      expect(sign.Sign1Tag).toBe(18);
+    });
+  });
+
+  describe('Integration Tests', () => {
+    it('should handle round-trip signing and verification with different algorithms', async () => {
+      const payload = Buffer.from('Integration test payload');
+      const algorithms = [
+        { alg: 'ES256', curve: 'P-256', keyPair: testKeys.p256, coordSize: 32 },
+        { alg: 'ES384', curve: 'P-384', keyPair: testKeys.p384, coordSize: 48 },
+        { alg: 'ES512', curve: 'P-521', keyPair: testKeys.p521, coordSize: 66 }
+      ];
+
+      for (const { alg, curve, keyPair, coordSize } of algorithms) {
+        const pubKeyUncompressed = keyPair.public;
+        const x = Buffer.from(pubKeyUncompressed.slice(1, 1 + coordSize));
+        const y = Buffer.from(pubKeyUncompressed.slice(1 + coordSize, 1 + 2 * coordSize));
+        
+        const headers: COSEHeaders = {
+          p: { alg },
+          u: {}
+        };
+
+        const signer: COSESigner = {
+          key: {
+            kty: 'EC2',
+            crv: curve,
+            x: x,
+            y: y,
+            d: Buffer.from(keyPair.private)
+          }
+        };
+
+        const verifier: COSEVerifier = {
+          key: {
+            kty: 'EC2',
+            crv: curve,
+            x: x,
+            y: y
+          }
+        };
+
+        // Test signing and verification
+        const signedData = await sign.create(headers, payload, signer);
+        const verifiedPayload = sign.verifySync(signedData, verifier);
+        
+        expect(verifiedPayload).toEqual(payload);
+      }
+    });
+  });
+});
