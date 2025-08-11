@@ -362,6 +362,11 @@ export function create(headers: COSEHeaders, payload: Buffer, signers: COSESigne
     const signer = signers;
     const externalAAD = signer.externalAAD || EMPTY_BUFFER;
     const alg = pMap.get(common.HeaderParameters.alg) || uMap.get(common.HeaderParameters.alg);
+    
+    if (!alg) {
+      return Promise.reject(new Error('Missing mandatory parameter \'alg\''));
+    }
+    
     const SigStructure = [
       'Signature1',
       bodyPEncoded,

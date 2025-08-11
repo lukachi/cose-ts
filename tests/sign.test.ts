@@ -310,7 +310,7 @@ describe('COSE Sign Module', () => {
       expect(() => sign.create(headers, payload, signer)).toThrow('Unknown \'alg\' parameter, UNKNOWN_ALG');
     });
 
-    it('should throw error for missing algorithm', () => {
+    it('should throw error for missing algorithm', async () => {
       const payload = Buffer.from('Test payload');
       const pubKeyUncompressed = testKeys.p256.public;
       const x = Buffer.from(pubKeyUncompressed.slice(1, 33));
@@ -331,7 +331,7 @@ describe('COSE Sign Module', () => {
         }
       };
 
-      expect(() => sign.create(headers, payload, signer)).toThrow('Unknown algorithm, undefined');
+      await expect(sign.create(headers, payload, signer)).rejects.toThrow('Missing mandatory parameter \'alg\'');
     });
 
     it('should throw error for empty signers array', () => {

@@ -181,13 +181,41 @@ export async function read(data: Buffer, key: Buffer, externalAAD?: Buffer, opti
   }
 
   let [p, u, payload, tag] = obj;
-  let pMap = (!p.length) ? EMPTY_BUFFER : decode(p);
-  pMap = (!(pMap as Map<number, any>).size) ? EMPTY_BUFFER : pMap;
-  u = (!u.size) ? EMPTY_BUFFER : u;
+  
+  // Handle protected headers - ensure p is a Buffer
+  if (Array.isArray(p)) {
+    p = Buffer.from(p);
+  } else if (p && typeof p === 'object' && p.data && Array.isArray(p.data)) {
+    // Handle cbor2 format: { data: [...], type: 'Buffer' }
+    p = Buffer.from(p.data);
+  } else if (!Buffer.isBuffer(p)) {
+    p = Buffer.alloc(0);
+  }
+  
+  let pMap: Map<number, any> = new Map();
+  if (p.length > 0) {
+    pMap = decode(p);
+  }
+  
+  // Handle unprotected headers - ensure it's a Map
+  if (u && typeof u === 'object' && !u.size && !Buffer.isBuffer(u)) {
+    // Handle plain objects that might come from cbor2
+    const tempMap = new Map();
+    for (const [key, value] of Object.entries(u)) {
+      tempMap.set(parseInt(key), value);
+    }
+    u = tempMap;
+  }
+  u = (!u || !u.size) ? new Map() : u;
 
-  // TODO validate protected header
-  const alg = (pMap !== EMPTY_BUFFER) ? (pMap as Map<number, any>).get(common.HeaderParameters.alg) : (u !== EMPTY_BUFFER) ? u.get(common.HeaderParameters.alg) : undefined;
-  const encodedP = (!(pMap as Map<number, any>).size) ? EMPTY_BUFFER : encode(pMap);
+  // Extract algorithm from protected headers first, then unprotected headers
+  // The algorithm is stored as a numeric ID, not a string
+  const alg = pMap.get(common.HeaderParameters.alg) || u.get(common.HeaderParameters.alg);
+  
+  // Use the original encoded protected headers for MAC verification
+  // NOT re-encoded from the decoded map, as that might have different canonical encoding
+  const encodedP = p; // Use original bytes
+  
   if (!AlgFromTags[alg]) {
     throw new Error('Unknown algorithm, ' + alg);
   }
