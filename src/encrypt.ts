@@ -336,7 +336,6 @@ export function create(headers: COSEHeaders, payload: Buffer, recipients: COSERe
 
         let ciphertext: Buffer;
         if (isNodeAlg[alg]) {
-          console.log(payload, key, alg, iv, aad)
           ciphertext = nobleEncrypt(payload, key, alg, iv, aad);
         } else if (isCCMAlg[alg] && runningInNode()) {
           ciphertext = nobleEncrypt(payload, key, alg, iv, aad, true);

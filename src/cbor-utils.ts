@@ -7,10 +7,8 @@ let isBrowser = false;
 // Detect environment
 if (typeof window !== 'undefined') {
     isBrowser = true;
-    console.log('Detected browser environment');
 } else if (typeof process !== 'undefined' && process.versions && process.versions.node) {
     isNode = true;
-    console.log('Detected Node.js environment');
 }
 
 // Try to import the best available CBOR library
@@ -19,11 +17,9 @@ try {
         // For browser, prefer cbor2 or cbor
         try {
             cborLib = require('cbor2');
-            console.log('Using cbor2 in browser');
         } catch (e) {
             try {
                 cborLib = require('cbor');
-                console.log('Using cbor in browser');
             } catch (e2) {
                 console.warn('No CBOR library found for browser environment');
             }
@@ -32,11 +28,9 @@ try {
         // For Node.js, use cbor
         try {
             cborLib = require('cbor');
-            console.log('Using cbor in Node.js');
         } catch (e) {
             try {
                 cborLib = require('cbor2');
-                console.log('Using cbor2 in Node.js');
             } catch (e2) {
                 console.warn('No CBOR library found for Node.js environment');
             }
@@ -48,30 +42,25 @@ try {
 
 // Helper to convert Buffer-like objects to Uint8Array in browser
 const prepareForEncoding = (data: any): any => {
-    console.log('Preparing for encoding:', typeof data, data?.constructor?.name);
     
     if (typeof data === 'object' && data !== null) {
         // Handle Buffer objects that got serialized incorrectly
         if (data.type === 'Buffer' && Array.isArray(data.data)) {
-            console.log('Found serialized Buffer, converting to Uint8Array');
             return new Uint8Array(data.data);
         }
         
         // Handle Buffer instances (this handles both Buffer and Uint8Array)
         if (data instanceof Uint8Array || (typeof Buffer !== 'undefined' && data instanceof Buffer)) {
-            console.log('Found Buffer/Uint8Array, ensuring it stays as Uint8Array');
             return new Uint8Array(data);
         }
         
         // Handle arrays recursively
         if (Array.isArray(data)) {
-            console.log('Processing array recursively');
             return data.map(prepareForEncoding);
         }
         
         // Handle objects recursively
         if (data.constructor === Object) {
-            console.log('Processing object recursively');
             const result: any = {};
             for (const [key, value] of Object.entries(data)) {
                 result[key] = prepareForEncoding(value);
@@ -81,7 +70,6 @@ const prepareForEncoding = (data: any): any => {
         
         // Handle Maps
         if (data instanceof Map) {
-            console.log('Processing Map recursively');
             const result = new Map();
             for (const [key, value] of data.entries()) {
                 result.set(key, prepareForEncoding(value));
@@ -98,9 +86,6 @@ export const encode = (data: any): Uint8Array => {
         throw new Error('No CBOR library available');
     }
     
-    console.log('*** CBOR ENCODE FUNCTION v3.0 - FORCE REFRESH ***');
-    console.log('Encoding with CBOR library:', cborLib.constructor?.name || 'unknown');
-    console.log('Input data raw:', data);
     
     // Deep clone and convert all Buffers to proper byte arrays
     const convertBuffersToBytes = (obj: any): any => {
@@ -110,13 +95,11 @@ export const encode = (data: any): Uint8Array => {
         
         // Handle Buffer objects (both actual Buffers and serialized ones)
         if (obj instanceof Uint8Array || (typeof Buffer !== 'undefined' && obj instanceof Buffer)) {
-            console.log('Converting Buffer/Uint8Array to byte array:', Array.from(obj));
             return new Uint8Array(obj);
         }
         
         // Handle serialized Buffer objects {type: "Buffer", data: [...]}
         if (typeof obj === 'object' && obj.type === 'Buffer' && Array.isArray(obj.data)) {
-            console.log('Converting serialized Buffer to byte array:', obj.data);
             return new Uint8Array(obj.data);
         }
         
@@ -147,7 +130,6 @@ export const encode = (data: any): Uint8Array => {
     };
     
     const processedData = convertBuffersToBytes(data);
-    console.log('Processed data:', processedData);
     
     let result: any;
     
@@ -163,10 +145,6 @@ export const encode = (data: any): Uint8Array => {
         throw e;
     }
     
-    console.log('Encode result type:', typeof result);
-    console.log('Encode result constructor:', result?.constructor?.name);
-    console.log('Encode result length:', result?.length);
-    console.log('Encode result (first 20 bytes):', result instanceof Uint8Array ? Array.from(result.slice(0, 20)) : result);
     
     // Ensure we always return Uint8Array
     if (result instanceof Uint8Array) {
@@ -212,10 +190,6 @@ export const decode = <T = any>(data: Uint8Array | Buffer | ArrayBuffer | number
         throw new Error('No CBOR library available');
     }
     
-    console.log('Decoding with CBOR library:', cborLib.constructor?.name || 'unknown');
-    console.log('Input data type:', typeof data);
-    console.log('Input data constructor:', data?.constructor?.name);
-    console.log('Input data length:', (data as any)?.length || (data instanceof ArrayBuffer ? data.byteLength : 'unknown'));
     
     // Convert to format the library expects
     let input: any = data;
@@ -228,8 +202,6 @@ export const decode = <T = any>(data: Uint8Array | Buffer | ArrayBuffer | number
         input = new Uint8Array(data);
     }
     
-    console.log('Converted input type:', typeof input);
-    console.log('Converted input constructor:', input?.constructor?.name);
     
     try {
         let result: T;
@@ -240,7 +212,6 @@ export const decode = <T = any>(data: Uint8Array | Buffer | ArrayBuffer | number
             throw new Error('CBOR library does not have decode method');
         }
         
-        console.log('Decode result:', result);
         return result;
     } catch (e) {
         console.error('CBOR decode failed:', e);
@@ -250,11 +221,9 @@ export const decode = <T = any>(data: Uint8Array | Buffer | ArrayBuffer | number
 
 // Tagged value helper
 export const createTag = (tag: number, value: any) => {
-    console.log('Creating tag:', tag, 'with value:', value);
     
     // Prepare value for proper encoding
     const preparedValue = prepareForEncoding(value);
-    console.log('Prepared value for tag:', preparedValue);
     
     if (cborLib.Tagged) {
         return new cborLib.Tagged(tag, preparedValue);

@@ -424,10 +424,6 @@ function doVerify(SigStructure: any[], verifier: COSEVerifier, alg: number, sig:
     const r = sig.slice(0, coordSize);
     const s = sig.slice(coordSize);
     
-    console.log('DEBUG: sig type:', typeof sig, 'constructor:', sig.constructor.name, 'isBuffer:', Buffer.isBuffer(sig));
-    console.log('DEBUG: r type:', typeof r, 'constructor:', r.constructor.name, 'isBuffer:', Buffer.isBuffer(r));
-    console.log('DEBUG: s type:', typeof s, 'constructor:', s.constructor.name, 'isBuffer:', Buffer.isBuffer(s));
-    
     // Ensure r and s are Buffers (in case they come as arrays from cbor-x)
     const rBuffer = Buffer.isBuffer(r) ? r : Buffer.from(r);
     const sBuffer = Buffer.isBuffer(s) ? s : Buffer.from(s);
@@ -443,13 +439,16 @@ function doVerify(SigStructure: any[], verifier: COSEVerifier, alg: number, sig:
     xBuffer.copy(pubKeyBytes, 1);
     yBuffer.copy(pubKeyBytes, 1 + coordSize);
     
-    // Convert signature to Buffer in the format Noble expects (r || s)
-    const signatureBytes = Buffer.alloc(coordSize * 2);
-    rBuffer.copy(signatureBytes, 0);
-    sBuffer.copy(signatureBytes, coordSize);
+    // Convert signature to Uint8Array in the format Noble expects (r || s)
+    const signatureBytes = new Uint8Array(coordSize * 2);
+    signatureBytes.set(new Uint8Array(rBuffer), 0);
+    signatureBytes.set(new Uint8Array(sBuffer), coordSize);
+    
+    // Convert pubKeyBytes to Uint8Array for @noble/curves
+    const pubKeyUint8Array = new Uint8Array(pubKeyBytes);
     
     // Use verify function with raw signature bytes
-    const isValid = curve.verify(signatureBytes, msgHash, pubKeyBytes);
+    const isValid = curve.verify(signatureBytes, msgHash, pubKeyUint8Array);
     
     if (!isValid) {
       throw new Error('Signature mismatch');
@@ -555,54 +554,73 @@ export async function doVerifyAsync(SigStructure: any[], verifier: COSEVerifier,
 
 function getSigner(signers: any[][], verifier: COSEVerifier): any[] | undefined {
   for (let i = 0; i < signers.length; i++) {
-    let signerHeaders = signers[i][1];
-    
-    // Convert signerHeaders from cbor2 format if needed
-    if (signerHeaders && typeof signerHeaders === 'object' && signerHeaders.data && Array.isArray(signerHeaders.data)) {
-      signerHeaders = Buffer.from(signerHeaders.data);
-    }
-    
-    // Check if signerHeaders is a Map or needs to be decoded
-    let headerMap = signerHeaders;
-    if (!(signerHeaders instanceof Map)) {
-      // If it's not a Map, try to treat it as an object and convert
-      if (typeof signerHeaders === 'object' && signerHeaders !== null) {
-        headerMap = new Map();
-        if (signerHeaders.kid !== undefined) {
-          headerMap.set(common.HeaderParameters.kid, signerHeaders.kid);
-        }
-        // Handle numeric keys as well
-        Object.keys(signerHeaders).forEach(key => {
-          const numKey = parseInt(key, 10);
-          if (!isNaN(numKey)) {
-            headerMap.set(numKey, signerHeaders[key]);
+    // Check both protected [0] and unprotected [1] headers for kid
+    for (let headerIndex of [0, 1]) {
+      let signerHeaders = signers[i][headerIndex];
+      
+      // Convert signerHeaders from cbor2 format if needed
+      if (signerHeaders && typeof signerHeaders === 'object' && signerHeaders.data && Array.isArray(signerHeaders.data)) {
+        signerHeaders = Buffer.from(signerHeaders.data);
+      }
+      
+      // Check if signerHeaders is a Map or needs to be decoded
+      let headerMap = signerHeaders;
+      if (!(signerHeaders instanceof Map)) {
+        // If it's a Buffer, try to decode it
+        if (Buffer.isBuffer(signerHeaders) && signerHeaders.length > 0) {
+          try {
+            headerMap = decode(signerHeaders);
+          } catch (e) {
+            // If decoding fails, skip this header
+            continue;
           }
-        });
-      }
-    }
-    
-    if (headerMap instanceof Map && headerMap.has && headerMap.has(common.HeaderParameters.kid)) {
-      let kid = headerMap.get(common.HeaderParameters.kid);
-      
-      // Convert kid from cbor2 format if needed
-      if (kid && typeof kid === 'object' && kid.data && Array.isArray(kid.data)) {
-        kid = Buffer.from(kid.data);
-      }
-      
-      if (kid && Buffer.isBuffer(kid) && verifier.key.kid) {
-        if (kid.equals(Buffer.from(verifier.key.kid, 'utf8'))) {
-          return signers[i];
         }
-      } else if (kid && typeof kid === 'string' && verifier.key.kid) {
-        if (kid === verifier.key.kid) {
-          return signers[i];
+        // If it's not a Map, try to treat it as an object and convert
+        else if (typeof signerHeaders === 'object' && signerHeaders !== null) {
+          headerMap = new Map();
+          if (signerHeaders.kid !== undefined) {
+            headerMap.set(common.HeaderParameters.kid, signerHeaders.kid);
+          }
+          // Handle numeric keys as well
+          Object.keys(signerHeaders).forEach(key => {
+            const numKey = parseInt(key, 10);
+            if (!isNaN(numKey)) {
+              headerMap.set(numKey, signerHeaders[key]);
+            }
+          });
         }
-      } else if (kid && Array.isArray(kid) && verifier.key.kid) {
-        // Handle case where kid comes as array from cbor-x
-        const kidBuffer = Buffer.from(kid);
-        const verifierKidBuffer = Buffer.from(verifier.key.kid, 'utf8');
-        if (kidBuffer.equals(verifierKidBuffer)) {
-          return signers[i];
+      }
+      
+      if (headerMap instanceof Map && headerMap.has && headerMap.has(common.HeaderParameters.kid)) {
+        let kid = headerMap.get(common.HeaderParameters.kid);
+        
+        // Convert kid from cbor2 format if needed
+        if (kid && typeof kid === 'object' && kid.data && Array.isArray(kid.data)) {
+          kid = Buffer.from(kid.data);
+        }
+        
+        if (kid && Buffer.isBuffer(kid) && verifier.key.kid) {
+          if (kid.equals(Buffer.from(verifier.key.kid, 'utf8'))) {
+            return signers[i];
+          }
+        } else if (kid && kid instanceof Uint8Array && verifier.key.kid) {
+          // Handle Uint8Array kid
+          const kidBuffer = Buffer.from(kid);
+          const verifierKidBuffer = Buffer.from(verifier.key.kid, 'utf8');
+          if (kidBuffer.equals(verifierKidBuffer)) {
+            return signers[i];
+          }
+        } else if (kid && typeof kid === 'string' && verifier.key.kid) {
+          if (kid === verifier.key.kid) {
+            return signers[i];
+          }
+        } else if (kid && Array.isArray(kid) && verifier.key.kid) {
+          // Handle case where kid comes as array from cbor-x
+          const kidBuffer = Buffer.from(kid);
+          const verifierKidBuffer = Buffer.from(verifier.key.kid, 'utf8');
+          if (kidBuffer.equals(verifierKidBuffer)) {
+            return signers[i];
+          }
         }
       }
     }
@@ -676,7 +694,6 @@ function verifyInternal(verifier: COSEVerifier, options: COSEOptions, obj: any):
     // Handle Uint8Array (common case for protected headers)
     p = Buffer.from(p);
   } else if (!Buffer.isBuffer(p)) {
-    console.log('DEBUG: p is not a Buffer, type:', typeof p, 'value:', p);
     p = Buffer.alloc(0); // Convert to empty buffer if not a buffer
   }
   if (Array.isArray(plaintext)) {
@@ -741,7 +758,7 @@ function verifyInternal(verifier: COSEVerifier, options: COSEOptions, obj: any):
       plaintext
     ];
     doVerify(SigStructure, verifier, alg, sig);
-    return plaintext;
+    return Buffer.from(plaintext);
   } else {
     const externalAAD = verifier.externalAAD || EMPTY_BUFFER;
 
@@ -763,6 +780,6 @@ function verifyInternal(verifier: COSEVerifier, options: COSEOptions, obj: any):
       plaintext
     ];
     doVerify(SigStructure, verifier, alg, signature);
-    return plaintext;
+    return Buffer.from(plaintext);
   }
 }
