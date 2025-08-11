@@ -1,7 +1,3 @@
-/* jshint esversion: 6 */
-/* jslint node: true */
-'use strict';
-
 import * as cbor from 'cbor';
 import * as crypto from 'crypto';
 import * as common from './common.js';

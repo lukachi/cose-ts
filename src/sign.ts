@@ -1,7 +1,3 @@
-/* jshint esversion: 6 */
-/* jslint node: true */
-'use strict';
-
 import * as cbor from 'cbor';
 import { p256 } from '@noble/curves/p256';
 import { p384 } from '@noble/curves/p384';

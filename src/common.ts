@@ -1,7 +1,3 @@
-/* jshint esversion: 6 */
-/* jslint node: true */
-'use strict';
-
 import type { AlgToTagsMap, HeaderParametersMap, KeyParametersMap, KeyTypesMap, KeyCrvMap, COSEKey } from './types.js';
 
 const AlgToTags: AlgToTagsMap = {

@@ -1,7 +1,3 @@
-/* jshint esversion: 6 */
-/* jslint node: true */
-'use strict';
-
 import * as cbor from 'cbor';
 import { create as createMac } from 'aes-cbc-mac';
 import * as crypto from 'crypto';
