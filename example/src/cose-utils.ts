@@ -1,10 +1,8 @@
-import { describe, expect, it } from "vitest";
 import { randomBytes } from '@noble/hashes/utils'
 import { hkdf } from '@noble/hashes/hkdf'
 import { sha256 } from '@noble/hashes/sha2'
-import { sign, encrypt, type COSEHeaders, type COSESigner, type COSEOptions } from '../src'
+import { sign, encrypt, cborUtils, type COSEHeaders, type COSESigner, type COSEOptions } from '@lukachi/cose-ts'
 import { p256 } from '@noble/curves/nist'
-import * as cborUtils from '../src/cbor-utils'
 
 export class Blockstream {
     private privateKey: Uint8Array
@@ -77,7 +75,6 @@ export class Blockstream {
     }
 }
 
-
 /**
  * Derive shared AES key using ECDH (matching HSM implementation)
  * 
@@ -121,12 +118,15 @@ export const encodeMessageToCbor = (message: object): Buffer => {
     console.log('=== CBOR ENCODING DEBUG ===');
     console.log('Environment info:', cborUtils.getEnvironmentInfo());
     console.log('Input message:', message);
+    console.log('Input message stringified:', JSON.stringify(message, null, 2));
     
     const encoded = cborUtils.encode(message);
     console.log('Encoded result type:', typeof encoded);
     console.log('Encoded result constructor:', encoded.constructor.name);
     console.log('Encoded result length:', encoded.length);
     console.log('Encoded bytes (first 20):', Array.from(encoded.slice(0, 20)));
+    console.log('Encoded bytes (all):', Array.from(encoded));
+    console.log('Encoded hex:', Buffer.from(encoded).toString('hex'));
     
     return Buffer.from(encoded);
 }
@@ -137,15 +137,24 @@ export const decodeCborMessage = <T>(messageBuffer: Buffer): T => {
     console.log('Input buffer type:', typeof messageBuffer);
     console.log('Input buffer constructor:', messageBuffer.constructor.name);
     console.log('Input buffer length:', messageBuffer.length);
+    console.log('Input buffer hex:', messageBuffer.toString('hex'));
+    console.log('Input buffer bytes:', Array.from(messageBuffer));
     
     const decoded = cborUtils.decode<T>(new Uint8Array(messageBuffer));
     console.log('Decoded result:', decoded);
+    console.log('Decoded result stringified:', JSON.stringify(decoded, null, 2));
     return decoded;
 }
 
 export const signMessage = async (privateKey: Uint8Array, cborMessage: Buffer, opts?: {
     unprotected?: COSEHeaders['u']
 }) => {
+    console.log('=== SIGN MESSAGE DEBUG ===');
+    console.log('Input cborMessage type:', typeof cborMessage);
+    console.log('Input cborMessage constructor:', cborMessage.constructor.name);
+    console.log('Input cborMessage length:', cborMessage.length);
+    console.log('Input cborMessage hex:', cborMessage.toString('hex'));
+    
     if (privateKey.length !== 32) {
         throw new Error('Private key must be 32 bytes long')
     }
@@ -171,21 +180,43 @@ export const signMessage = async (privateKey: Uint8Array, cborMessage: Buffer, o
         signer
     )
 
+    console.log('Signed COSE result type:', typeof signedCose);
+    console.log('Signed COSE result constructor:', signedCose.constructor.name);
+    console.log('Signed COSE result length:', signedCose.length);
+    console.log('Signed COSE result hex:', signedCose.toString('hex'));
+
     return signedCose
 }
 
 export const verifyMessage = async (compressedPublicKey: Uint8Array, signedMessage: Buffer) => {
+    console.log('=== VERIFY MESSAGE DEBUG ===');
+    console.log('Input compressedPublicKey type:', typeof compressedPublicKey);
+    console.log('Input compressedPublicKey constructor:', compressedPublicKey.constructor.name);
+    console.log('Input signedMessage type:', typeof signedMessage);
+    console.log('Input signedMessage constructor:', signedMessage.constructor.name);
+    
     const point = p256.Point.fromHex(compressedPublicKey)
+
+    const x = Buffer.from(point.x.toString(16).padStart(64, '0'), 'hex');
+    const y = Buffer.from(point.y.toString(16).padStart(64, '0'), 'hex');
+    
+    console.log('Created x type:', typeof x);
+    console.log('Created x constructor:', x.constructor.name);
+    console.log('Created x isBuffer:', Buffer.isBuffer(x));
+    console.log('Created y type:', typeof y);
+    console.log('Created y constructor:', y.constructor.name);
+    console.log('Created y isBuffer:', Buffer.isBuffer(y));
 
     const verifier = {
         key: {
             kty: 'EC2',
             crv: 'P-256',
-            x: Buffer.from(point.x.toString(16).padStart(64, '0'), 'hex'),
-            y: Buffer.from(point.y.toString(16).padStart(64, '0'), 'hex')
+            x: x,
+            y: y
         }
     }
 
+    console.log('About to call sign.verify...');
     return sign.verify(signedMessage, verifier)
 }
 
@@ -219,75 +250,17 @@ export const decryptMessage = async (compressedPublicKey: Uint8Array, encryptedM
 
     const pk = compressedPublicKey.length === 32 ? compressedPublicKey : compressedPublicKey.slice(1, 33)
 
-
     return await encrypt.read(encryptedMessage, Buffer.from(pk))
 }
 
-const adminPK = 'a1b2c3d4e5f67890123456789012345678901234567890123456789012345678'
-const hsmPK = '0259da6479b7fdf857882613186a8d7c34f740b9f0aaa86b4875388cb7c1a4f59c'
+// Test constants
+export const adminPK = 'a1b2c3d4e5f67890123456789012345678901234567890123456789012345678'
+export const hsmPK = '0259da6479b7fdf857882613186a8d7c34f740b9f0aaa86b4875388cb7c1a4f59c'
 
-const testAdminUserId = '550e8400-e29b-41d4-a716-446655440000'
-const kid = `customer:${testAdminUserId}`
-const blockstream = new Blockstream(
+export const testAdminUserId = '550e8400-e29b-41d4-a716-446655440000'
+export const kid = `customer:${testAdminUserId}`
+
+export const blockstream = new Blockstream(
     Buffer.from(adminPK, 'hex'), // test admin pk
     Buffer.from(hsmPK, 'hex'), // hsm pk
 )
-
-describe("Build Request", () => {
-  it("Should build request and parse it", async () => {
-    const originalMessage = { 'action': 'get', 'resource': '/users' }
-    
-    // Log the original message
-    console.log('Original message:', originalMessage)
-    
-    // Log CBOR encoding of original message
-    const cborMsg = encodeMessageToCbor(originalMessage)
-    console.log('CBOR encoded message:', cborMsg)
-    console.log('CBOR decoded back:', decodeCborMessage(cborMsg))
-    
-    const request = await blockstream.request(
-      originalMessage,
-      {
-        unprotected: {
-          kid: Buffer.from(kid, 'utf-8')
-          }
-      }
-    )
-
-    console.log('Final encrypted request buffer:', request.toString('hex'))
-    console.log('Final encrypted request buffer length:', request.length)
-    
-    // Let's also log the intermediate steps
-    const signedMessage = await signMessage(
-      new Uint8Array(Buffer.from(adminPK, 'hex')), 
-      cborMsg,
-      {
-        unprotected: {
-          kid: Buffer.from(kid, 'utf-8')
-        }
-      }
-    )
-    console.log('Signed message:', signedMessage.toString('hex'))
-    console.log('Signed message decoded:', cborUtils.decode(new Uint8Array(signedMessage)))
-
-    const sharedKey = deriveSharedKey(new Uint8Array(Buffer.from(adminPK, 'hex')), new Uint8Array(Buffer.from(hsmPK, 'hex')))
-    const decryptedRequest = await encrypt.read(
-      request,
-      Buffer.from(sharedKey)
-    )
-
-    console.log('Decrypted request:', decryptedRequest)
-    console.log('Decrypted request decoded:', cborUtils.decode(new Uint8Array(decryptedRequest)))
-
-    const adminPublicKey = p256.getPublicKey(new Uint8Array(Buffer.from(adminPK, 'hex')), true)
-    const verifiedRequest = await verifyMessage(
-      adminPublicKey,
-      decryptedRequest
-    )
-
-    console.log('Verified request:', verifiedRequest)
-    console.log('Verified request decoded:', decodeCborMessage(verifiedRequest))
-
-    expect(verifiedRequest).toBeDefined()
-  })
-})

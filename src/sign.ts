@@ -1,20 +1,18 @@
-import * as cbor from 'cbor';
+import * as cborUtils from './cbor-utils.js';
 import { p256, p384, p521 } from '@noble/curves/nist';
 import { sha256, sha384, sha512 } from '@noble/hashes/sha2';
 import * as jsrsasign from 'jsrsasign';
 import * as common from './common.js';
 import type { COSEHeaders, COSESigner, COSEVerifier, COSEOptions, AlgorithmInfo, NodeAlgorithm } from './types.js';
 
-const { Tagged } = cbor;
-
 // Wrapper functions for CBOR operations with canonical encoding
 function encode(data: any): Buffer {
-  const encoded = cbor.encode(data);
+  const encoded = cborUtils.encode(data);
   return Buffer.from(encoded);
 }
 
 function decode(data: Buffer): any {
-  return cbor.decode(data);
+  return cborUtils.decode(data);
 }
 
 const EMPTY_BUFFER = common.EMPTY_BUFFER;
@@ -359,7 +357,7 @@ export function create(headers: COSEHeaders, payload: Buffer, signers: COSESigne
       encodedP = encode(pMap);
     }
     const signed = [encodedP, uMap, payload, signatures];
-    return Promise.resolve(encode(options.excludetag ? signed : new Tagged(SignTag, signed)));
+    return Promise.resolve(encode(options.excludetag ? signed : cborUtils.createTag(SignTag, signed)));
   } else {
     const signer = signers;
     const externalAAD = signer.externalAAD || EMPTY_BUFFER;
@@ -383,7 +381,7 @@ export function create(headers: COSEHeaders, payload: Buffer, signers: COSESigne
       encodedP = encode(pMap);
     }
     const signed = [encodedP, uMap, payload, sig];
-    return Promise.resolve(encode(options.excludetag ? signed : new Tagged(Sign1Tag, signed)));
+    return Promise.resolve(encode(options.excludetag ? signed : cborUtils.createTag(Sign1Tag, signed)));
   }
 }
 
@@ -426,12 +424,16 @@ function doVerify(SigStructure: any[], verifier: COSEVerifier, alg: number, sig:
     const r = sig.slice(0, coordSize);
     const s = sig.slice(coordSize);
     
+    console.log('DEBUG: sig type:', typeof sig, 'constructor:', sig.constructor.name, 'isBuffer:', Buffer.isBuffer(sig));
+    console.log('DEBUG: r type:', typeof r, 'constructor:', r.constructor.name, 'isBuffer:', Buffer.isBuffer(r));
+    console.log('DEBUG: s type:', typeof s, 'constructor:', s.constructor.name, 'isBuffer:', Buffer.isBuffer(s));
+    
     // Ensure r and s are Buffers (in case they come as arrays from cbor-x)
     const rBuffer = Buffer.isBuffer(r) ? r : Buffer.from(r);
     const sBuffer = Buffer.isBuffer(s) ? s : Buffer.from(s);
     
     // Convert public key coordinates to the right format
-    const pubKeyBytes = new Uint8Array(1 + coordSize * 2); // uncompressed format
+    const pubKeyBytes = Buffer.alloc(1 + coordSize * 2); // uncompressed format
     pubKeyBytes[0] = 0x04; // uncompressed point indicator
     
     // Ensure verifier key coordinates are Buffers
@@ -441,8 +443,8 @@ function doVerify(SigStructure: any[], verifier: COSEVerifier, alg: number, sig:
     xBuffer.copy(pubKeyBytes, 1);
     yBuffer.copy(pubKeyBytes, 1 + coordSize);
     
-    // Convert signature to Uint8Array in the format Noble expects (r || s)
-    const signatureBytes = new Uint8Array(coordSize * 2);
+    // Convert signature to Buffer in the format Noble expects (r || s)
+    const signatureBytes = Buffer.alloc(coordSize * 2);
     rBuffer.copy(signatureBytes, 0);
     sBuffer.copy(signatureBytes, coordSize);
     
@@ -526,8 +528,12 @@ export async function doVerifyAsync(SigStructure: any[], verifier: COSEVerifier,
     // Convert public key coordinates to the right format
     const pubKeyBytes = new Uint8Array(1 + coordSize * 2); // uncompressed format
     pubKeyBytes[0] = 0x04; // uncompressed point indicator
-    verifier.key.x!.copy(pubKeyBytes, 1);
-    verifier.key.y!.copy(pubKeyBytes, 1 + coordSize);
+    
+    // Ensure x and y coordinates are Buffers before using .copy()
+    const xBuffer = Buffer.isBuffer(verifier.key.x) ? verifier.key.x : Buffer.from(verifier.key.x!);
+    const yBuffer = Buffer.isBuffer(verifier.key.y) ? verifier.key.y : Buffer.from(verifier.key.y!);
+    xBuffer.copy(pubKeyBytes, 1);
+    yBuffer.copy(pubKeyBytes, 1 + coordSize);
     
     // Create signature in DER format for Noble
     const sigBytes = new Uint8Array(sig);
@@ -641,12 +647,13 @@ export function verifySync(payload: Buffer, verifier: COSEVerifier, options?: CO
 function verifyInternal(verifier: COSEVerifier, options: COSEOptions, obj: any): Buffer {
   options = options || {};
   let type = options.defaultType ? options.defaultType : SignTag;
-  if (obj instanceof Tagged) {
-    if (obj.tag !== SignTag && obj.tag !== Sign1Tag) {
-      throw new Error('Unexpected cbor tag, \'' + obj.tag + '\'');
+  if (cborUtils.isTagged(obj)) {
+    const tagNumber = cborUtils.getTagNumber(obj);
+    if (tagNumber !== SignTag && tagNumber !== Sign1Tag) {
+      throw new Error('Unexpected cbor tag, \'' + tagNumber + '\'');
     }
-    type = Number(obj.tag);
-    obj = obj.value;
+    type = Number(tagNumber);
+    obj = cborUtils.getTagValue(obj);
   }
 
   if (!Array.isArray(obj)) {
@@ -665,6 +672,9 @@ function verifyInternal(verifier: COSEVerifier, options: COSEOptions, obj: any):
   } else if (p && typeof p === 'object' && p.data && Array.isArray(p.data)) {
     // Handle cbor2 format: { data: [...], type: 'Buffer' }
     p = Buffer.from(p.data);
+  } else if (p instanceof Uint8Array) {
+    // Handle Uint8Array (common case for protected headers)
+    p = Buffer.from(p);
   } else if (!Buffer.isBuffer(p)) {
     console.log('DEBUG: p is not a Buffer, type:', typeof p, 'value:', p);
     p = Buffer.alloc(0); // Convert to empty buffer if not a buffer

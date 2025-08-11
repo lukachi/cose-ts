@@ -1,6 +1,6 @@
 {
   "name": "@lukachi/cose-ts",
-  "version": "0.1.1",
+  "version": "0.2.3",
   "description": "Typescript COSE implementation",
   "type": "module",
   "files": [
@@ -51,7 +51,10 @@
     "@types/cose-js": "^0.8.3",
     "@types/jsrsasign": "^10.5.15",
     "@types/node": "^24.0.14",
+    "buffer": "^6.0.3",
+    "crypto-browserify": "^3.12.1",
     "jsdom": "^26.1.0",
+    "stream-browserify": "^3.0.0",
     "typescript": "~5.8.3",
     "vite": "^7.0.4",
     "vite-plugin-node-polyfills": "^0.24.0",

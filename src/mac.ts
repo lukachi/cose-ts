@@ -1,4 +1,4 @@
-import * as cbor from 'cbor';
+import * as cborUtils from './cbor-utils.js';
 // @ts-ignore
 import { create as createMac } from 'aes-cbc-mac';
 import * as common from './common.js';
@@ -6,16 +6,14 @@ import { hmac } from '@noble/hashes/hmac';
 import { sha256, sha384, sha512 } from '@noble/hashes/sha2';
 import type { COSEHeaders, COSERecipient, COSEOptions } from './types.js';
 
-const { Tagged } = cbor;
-
 // Wrapper functions for CBOR operations with canonical encoding
 function encode(data: any): Buffer {
-  const encoded = cbor.encode(data);
+  const encoded = cborUtils.encode(data);
   return Buffer.from(encoded);
 }
 
 function decode(data: Buffer): any {
-  return cbor.decode(data);
+  return cborUtils.decode(data);
 }
 
 const EMPTY_BUFFER = common.EMPTY_BUFFER;
@@ -155,7 +153,7 @@ export async function create(
     const ru = common.TranslateHeaders(recipient.u || {});
     const rp = EMPTY_BUFFER;
     const maced = [encodedP, uMap, payload, tag, [[rp, ru, EMPTY_BUFFER]]];
-    return encode(options.excludetag ? maced : new Tagged(MACTag, maced));
+    return encode(options.excludetag ? maced : cborUtils.createTag(MACTag, maced));
   } else {
     const predictableP = (!pMap.size) ? EMPTY_BUFFER : encode(pMap);
     let encodedP: Buffer;
@@ -167,7 +165,7 @@ export async function create(
     let tag = await doMac('MAC0', predictableP, externalAAD, payload, COSEAlgToNodeAlg[AlgFromTags[alg]], recipients.key as Buffer);
     tag = tag.slice(0, CutTo[alg]);
     const maced = [encodedP, uMap, payload, tag];
-    return encode(options.excludetag ? maced : new Tagged(MAC0Tag, maced));
+    return encode(options.excludetag ? maced : cborUtils.createTag(MAC0Tag, maced));
   }
 }
 
@@ -178,7 +176,7 @@ export async function read(data: Buffer, key: Buffer, externalAAD?: Buffer, opti
   let obj = decode(data);
 
   let type = options.defaultType ? options.defaultType : MAC0Tag;
-  if (obj instanceof Tagged) {
+  if (cborUtils.isTagged(obj)) {
     if (obj.tag !== MAC0Tag && obj.tag !== MACTag) {
       throw new Error('Unexpected cbor tag, \'' + obj.tag + '\'');
     }

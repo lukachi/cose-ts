@@ -1,4 +1,4 @@
-import * as cbor from 'cbor';
+import * as cborUtils from './cbor-utils.js';
 import * as common from './common.js';
 import { hkdf } from '@noble/hashes/hkdf';
 import { sha256, sha512 } from '@noble/hashes/sha2';
@@ -7,16 +7,14 @@ import { gcm } from '@noble/ciphers/aes';
 import { p256, p521 } from '@noble/curves/nist';
 import type { COSEHeaders, COSERecipient, COSEOptions, COSEKey } from './types.js';
 
-const { Tagged } = cbor;
-
 // Wrapper functions for CBOR operations with canonical encoding
 function encode(data: any): Buffer {
-  const encoded = cbor.encode(data);
+  const encoded = cborUtils.encode(data);
   return Buffer.from(encoded);
 }
 
 function decode(data: Buffer): any {
-  return cbor.decode(data);
+  return cborUtils.decode(data);
 }
 
 const EMPTY_BUFFER = common.EMPTY_BUFFER;
@@ -354,7 +352,7 @@ export function create(headers: COSEHeaders, payload: Buffer, recipients: COSERe
         }
 
         const encrypted = [encodedP, uMap, ciphertext, recipientStruct];
-        resolve(encode(options.excludetag ? encrypted : new Tagged(EncryptTag, encrypted)));
+        resolve(encode(options.excludetag ? encrypted : cborUtils.createTag(EncryptTag, encrypted)));
       } else {
         let iv: Buffer;
         if (options.contextIv) {
@@ -385,7 +383,7 @@ export function create(headers: COSEHeaders, payload: Buffer, recipients: COSERe
           encodedP = encode(pMap);
         }
         const encrypted = [encodedP, uMap, ciphertext];
-        resolve(encode(options.excludetag ? encrypted : new Tagged(Encrypt0Tag, encrypted)));
+        resolve(encode(options.excludetag ? encrypted : cborUtils.createTag(Encrypt0Tag, encrypted)));
       }
     } catch (error) {
       reject(error);
@@ -416,12 +414,13 @@ export async function read(data: Buffer, key: Buffer, options?: COSEOptions): Pr
   const externalAAD = options.externalAAD || EMPTY_BUFFER;
   let obj = decode(data);
   let msgTag = options.defaultType ? options.defaultType : EncryptTag;
-  if (obj instanceof Tagged) {
-    if (obj.tag !== EncryptTag && obj.tag !== Encrypt0Tag) {
-      throw new Error('Unknown tag, ' + obj.tag);
+  if (cborUtils.isTagged(obj)) {
+    const tagNumber = cborUtils.getTagNumber(obj);
+    if (tagNumber !== EncryptTag && tagNumber !== Encrypt0Tag) {
+      throw new Error('Unknown tag, ' + tagNumber);
     }
-    msgTag = Number(obj.tag);
-    obj = obj.value;
+    msgTag = Number(tagNumber);
+    obj = cborUtils.getTagValue(obj);
   }
 
   if (!Array.isArray(obj)) {
@@ -444,6 +443,9 @@ export async function read(data: Buffer, key: Buffer, options?: COSEOptions): Pr
   } else if (p && typeof p === 'object' && p.data && Array.isArray(p.data)) {
     // Handle cbor2 format: { data: [...], type: 'Buffer' }
     p = Buffer.from(p.data);
+  } else if (p instanceof Uint8Array) {
+    // Handle Uint8Array (common case for protected headers)
+    p = Buffer.from(p);
   } else if (!Buffer.isBuffer(p)) {
     p = Buffer.alloc(0); // Convert to empty buffer if not a buffer
   }
@@ -474,36 +476,14 @@ export async function read(data: Buffer, key: Buffer, options?: COSEOptions): Pr
   const pDecoded = (!(pMap as any).size && !(typeof pMap === 'object' && Object.keys(pMap).length)) ? new Map() : pMap;
   const uDecoded = (!u || (u instanceof Map && !u.size)) ? new Map() : u;
 
-  // Extract algorithm using the same getCommonParameter function logic
-  function getCommonParameter(first: Map<number, any> | any, second: Map<number, any> | any, parameter: number): any {
-    let result: any;
-    
-    // Handle first parameter
-    if (first instanceof Map && first.get) {
-      result = first.get(parameter);
-    } else if (first && typeof first === 'object' && !Buffer.isBuffer(first)) {
-      // Handle plain objects that might come from cbor2
-      result = first[parameter];
-    }
-    
-    // Handle second parameter if result not found
-    if (result === undefined && second instanceof Map && second.get) {
-      result = second.get(parameter);
-    } else if (result === undefined && second && typeof second === 'object' && !Buffer.isBuffer(second)) {
-      // Handle plain objects that might come from cbor2
-      result = second[parameter];
-    }
-    
-    return result;
-  }
-
-  const alg = getCommonParameter(pDecoded, uDecoded, common.HeaderParameters.alg);
+  const alg = pDecoded.get(common.HeaderParameters.alg) || uDecoded.get(common.HeaderParameters.alg);
+  
   if (!TagToAlg[alg]) {
     throw new Error('Unknown or unsupported algorithm ' + alg);
   }
 
-  let iv = getCommonParameter(null, uDecoded, common.HeaderParameters.IV);
-  let partialIv = getCommonParameter(null, uDecoded, common.HeaderParameters.Partial_IV);
+  let iv = uDecoded.get(common.HeaderParameters.IV);
+  let partialIv = uDecoded.get(common.HeaderParameters.Partial_IV);
   
   // Convert iv from cbor2 format if needed
   if (iv && typeof iv === 'object' && iv.data && Array.isArray(iv.data)) {
