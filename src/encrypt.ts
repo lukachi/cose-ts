@@ -5,7 +5,9 @@
 import * as cbor from 'cbor';
 import * as crypto from 'crypto';
 import * as common from './common.js';
-import HKDF from 'node-hkdf-sync';
+import { hkdf } from '@noble/hashes/hkdf';
+import { sha256 } from '@noble/hashes/sha256';
+import { sha512 } from '@noble/hashes/sha512';
 import type { COSEHeaders, COSERecipient, COSEOptions } from './types.js';
 
 const Tagged = cbor.Tagged;
@@ -123,14 +125,14 @@ const keyLength: NumberMap = {
 };
 
 interface HKDFAlgMap {
-  [key: string]: string;
+  [key: string]: typeof sha256 | typeof sha512;
 }
 
 const HKDFAlg: HKDFAlgMap = {
-  'ECDH-ES': 'sha256',
-  'ECDH-ES-512': 'sha512',
-  'ECDH-SS': 'sha256',
-  'ECDH-SS-512': 'sha512'
+  'ECDH-ES': sha256,
+  'ECDH-ES-512': sha512,
+  'ECDH-SS': sha256,
+  'ECDH-SS-512': sha512
 };
 
 interface NodeCRVMap {
@@ -270,8 +272,8 @@ export function create(headers: COSEHeaders, payload: Buffer, recipients: COSERe
           }
           const context = createContext(rp, alg, partyUNonce);
           const nrBytes = keyLength[alg];
-          const hkdf = new HKDF(HKDFAlg[recipients[0].p.alg], undefined, ikm);
-          key = hkdf.derive(context, nrBytes);
+          const hashFn = HKDFAlg[recipients[0].p.alg];
+          key = Buffer.from(hkdf(hashFn, new Uint8Array(ikm), undefined, new Uint8Array(context), nrBytes));
           let ru = recipients[0].u || {};
 
           if (recipients[0].p.alg === 'ECDH-ES' ||
