@@ -1,109 +1,191 @@
-[![Build Status](https://app.travis-ci.com/erdtman/cose-js.svg?branch=master)](https://app.travis-ci.com/erdtman/cose-js)
-[![Coverage Status](https://coveralls.io/repos/github/erdtman/cose-js/badge.svg?branch=master)](https://coveralls.io/github/erdtman/cose-js?branch=master)
-# cose-js
-JavaScript implementation of [COSE](https://tools.ietf.org/html/rfc8152), [RFC8152](https://tools.ietf.org/html/rfc8152)
-## MAC
-```js
-const cose = require('cose-js');
-try {
-  const plaintext = 'Important message!';
-  const headers = {
-    p: { alg: 'SHA-256_64' },
-    u: { kid: 'our-secret' }
-  };
-  const recipent = {
-    key: Buffer.from('231f4c4d4d3051fdc2ec0a3851d5b383', 'hex')
-  };
-  const buf = await cose.mac.create(headers, plaintext, recipent);
-  console.log('MACed message: ' + buf.toString('hex'));
-} catch (error) {
-  console.log(error);
-}
+# @lukachi/cose-ts
+
+A modern TypeScript implementation of [COSE (CBOR Object Signing and Encryption)](https://tools.ietf.org/html/rfc8152) as defined in [RFC 8152](https://tools.ietf.org/html/rfc8152).
+
+## Features
+
+- 🔐 **Complete COSE implementation** - Support for signing, MAC, and encryption operations
+- 🌐 **Browser and Node.js compatible** - Works in both environments with proper polyfills
+- 🎯 **TypeScript first** - Fully typed API with comprehensive type definitions
+- 🛡️ **Modern cryptography** - Built on [@noble](https://github.com/paulmillr/noble) cryptographic libraries
+- 🧪 **Well tested** - Comprehensive test suite with Vitest
+- 📦 **Multiple formats** - ESM, UMD, and CommonJS support
+
+## Installation
+
+```bash
+npm install @lukachi/cose-ts
 ```
-## Verify MAC
-```js
-const cose = require('cose-js');
-try {
-  const key = Buffer.from('231f4c4d4d3051fdc2ec0a3851d5b383', 'hex');
-  const COSEMessage = Buffer.from('d18443a10104a1044a6f75722d73656372657472496d706f7274616e74206d65737361676521488894981d4aa5d614', 'hex');
-  const buf = await cose.mac.read(COSEMessage, key);
-  console.log('Verified message: ' + buf.toString('utf8'));
-} catch (error) {
-  console.log(error);
-}
+
+## Quick Start
+
+### Signing (COSE_Sign1)
+
+```typescript
+import { sign } from '@lukachi/cose-ts';
+
+// Create a signed message
+const payload = Buffer.from('Hello, COSE!');
+const headers = {
+  p: { alg: 'ES256' },
+  u: { kid: 'my-key-id' }
+};
+
+const signer = {
+  key: {
+    kty: 'EC2',
+    crv: 'P-256',
+    d: Buffer.from('private-key-bytes', 'hex'),
+    x: Buffer.from('public-key-x-coordinate', 'hex'),
+    y: Buffer.from('public-key-y-coordinate', 'hex')
+  }
+};
+
+const signedMessage = await sign.create(headers, payload, signer);
+
+// Verify the signature
+const verifier = {
+  key: {
+    kty: 'EC2',
+    crv: 'P-256',
+    x: Buffer.from('public-key-x-coordinate', 'hex'),
+    y: Buffer.from('public-key-y-coordinate', 'hex')
+  }
+};
+
+const verifiedPayload = await sign.verify(signedMessage, verifier);
 ```
-## Sign
-```js
-const cose = require('cose-js');
-try {
-  const plaintext = 'Important message!';
-  const headers = {
-    p: { alg: 'ES256' },
-    u: { kid: '11' }
-  };
-  const signer = {
-    key: {
-      d: Buffer.from('6c1382765aec5358f117733d281c1c7bdc39884d04a45a1e6c67c858bc206c19', 'hex')
-    }
-  };
-  const buf = await cose.sign.create(headers, plaintext, signer);
-  console.log('Signed message: ' + buf.toString('hex'));
-} catch (error) {
-  console.log(error);
-}
+
+### Message Authentication Code (COSE_Mac)
+
+```typescript
+import { mac } from '@lukachi/cose-ts';
+
+// Create a MAC
+const payload = Buffer.from('Important message!');
+const headers = {
+  p: { alg: 'HS256' },
+  u: { kid: 'shared-secret-id' }
+};
+
+const recipient = {
+  key: Buffer.from('shared-secret-key', 'hex')
+};
+
+const macMessage = await mac.create(headers, payload, recipient);
+
+// Verify the MAC
+const verifiedPayload = await mac.read(macMessage, recipient.key);
 ```
-## Verify Signature
-```js
-const cose = require('cose-js');
-try {
-  const verifier = {
-    key: {
-      x: Buffer.from('143329cce7868e416927599cf65a34f3ce2ffda55a7eca69ed8919a394d42f0f', 'hex'),
-      y: Buffer.from('60f7f1a780d8a783bfb7a2dd6b2796e8128dbbcef9d3d168db9529971a36e7b9', 'hex')
-    }
-  };
-  const COSEMessage = Buffer.from('d28443a10126a10442313172496d706f7274616e74206d6573736167652158404c2b6b66dfedc4cfef0f221cf7ac7f95087a4c4245fef0063a0fd4014b670f642d31e26d38345bb4efcdc7ded3083ab4fe71b62a23f766d83785f044b20534f9', 'hex');
-  const buf = await cose.sign.verify(COSEMessage, verifier);
-  console.log('Verified message: ' + buf.toString('utf8'));
-} catch (error) {
-  console.log(error);
-}
+
+### Encryption (COSE_Encrypt)
+
+```typescript
+import { encrypt } from '@lukachi/cose-ts';
+
+// Encrypt a message
+const plaintext = Buffer.from('Secret message!');
+const headers = {
+  p: { alg: 'A256GCM' },
+  u: { kid: 'encryption-key-id' }
+};
+
+const recipient = {
+  key: Buffer.from('encryption-key', 'hex')
+};
+
+const encryptedMessage = await encrypt.create(headers, plaintext, recipient);
+
+// Decrypt the message
+const decryptedPayload = await encrypt.read(encryptedMessage, recipient.key);
 ```
-## Encrypt
-```js
-const cose = require('cose-js');
-try {
-  const plaintext = 'Secret message!';
-  const headers = {
-    p: { alg: 'A128GCM' },
-    u: { kid: 'our-secret' }
-  };
-  const recipient = {
-    key: Buffer.from('231f4c4d4d3051fdc2ec0a3851d5b383', 'hex')
-  };
-  const buf = await cose.encrypt.create(headers, plaintext, recipient);
-  console.log('Encrypted message: ' + buf.toString('hex'));
-} catch (error) {
-  console.log(error);
-}
+
+## Supported Algorithms
+
+### Signing Algorithms
+- **ES256** - ECDSA using P-256 curve and SHA-256
+- **ES384** - ECDSA using P-384 curve and SHA-384  
+- **ES512** - ECDSA using P-521 curve and SHA-512
+- **PS256** - RSASSA-PSS using SHA-256
+- **PS384** - RSASSA-PSS using SHA-384
+- **PS512** - RSASSA-PSS using SHA-512
+
+### MAC Algorithms
+- **HS256** - HMAC using SHA-256
+- **HS384** - HMAC using SHA-384
+- **HS512** - HMAC using SHA-512
+
+### Encryption Algorithms
+- **A128GCM** - AES-128 in Galois/Counter Mode
+- **A192GCM** - AES-192 in Galois/Counter Mode
+- **A256GCM** - AES-256 in Galois/Counter Mode
+
+## Development
+
+### Prerequisites
+- Node.js 22 or higher
+- pnpm (recommended) or npm
+
+### Setup
+
+```bash
+# Clone the repository
+git clone https://github.com/lukachi/cose-ts.git
+cd cose-ts
+
+# Install dependencies
+pnpm install
+
+# Run tests
+pnpm test
+
+# Build the library
+pnpm build
+
+# Run the example application
+cd example
+pnpm install
+pnpm dev
 ```
-## Decrypt
-```js
-const cose = require('cose-js');
-try {
-  const key = Buffer.from('231f4c4d4d3051fdc2ec0a3851d5b383', 'hex');
-  const COSEMessage = Buffer.from('d8608443a10101a2044a6f75722d736563726574054c291a40271067ff57b1623c30581f23b663aaf9dfb91c5a39a175118ad7d72d416385b1b610e28b3b3fd824a397818340a040', 'hex');
-  const buf = await cose.encrypt.read(COSEMessage, key);
-  console.log('Protected message: ' + buf.toString('utf8'));
-} catch (error) {
-  console.log(error);
-}
+
+### Project Structure
+
 ```
-## Install
+src/
+├── index.ts          # Main exports
+├── types.ts          # TypeScript type definitions
+├── common.ts         # Common utilities and constants
+├── sign.ts           # COSE_Sign1 implementation
+├── mac.ts            # COSE_Mac implementation
+├── encrypt.ts        # COSE_Encrypt implementation
+└── cbor-utils.ts     # CBOR encoding/decoding utilities
+
+tests/                # Comprehensive test suite
+example/              # React browser example application
 ```
-npm install cose-js --save
-```
-## Test
-```
-npm test
-```
+
+## Browser Support
+
+This library works in modern browsers with proper polyfills. The example application demonstrates browser usage with Vite providing the necessary polyfills for Node.js APIs.
+
+## API Documentation
+
+For detailed API documentation and advanced usage examples, see the [example application](./example) which includes interactive demonstrations of all major features.
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request. Make sure to:
+
+1. Add tests for new features
+2. Update documentation as needed
+3. Follow the existing code style
+4. Ensure all tests pass
+
+## License
+
+MIT License - see [LICENSE](LICENSE) file for details.
+
+## Related Standards
+
+- [RFC 8152 - CBOR Object Signing and Encryption (COSE)](https://tools.ietf.org/html/rfc8152)
+- [RFC 7049 - Concise Binary Object Representation (CBOR)](https://tools.ietf.org/html/rfc7049)
