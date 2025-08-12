@@ -64,13 +64,15 @@
     "release": "release-it"
   },
   "dependencies": {
+    "aes-cbc-mac": "^1.0.1",
+    "jsrsasign": "^11.1.0"
+  },
+  "peerDependencies": {
     "@noble/ciphers": "^1.3.0",
     "@noble/curves": "^1.9.4",
     "@noble/hashes": "^1.8.0",
-    "aes-cbc-mac": "^1.0.1",
     "cbor": "^8.1.0",
-    "cbor2": "^2.0.1",
-    "jsrsasign": "^11.1.0"
+    "cbor2": "^2.0.1"
   },
   "devDependencies": {
     "@esbuild-plugins/node-globals-polyfill": "^0.2.3",
