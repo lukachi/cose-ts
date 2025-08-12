@@ -40,18 +40,18 @@ try {
     console.error('Failed to load CBOR library:', e);
 }
 
-// Helper to convert only problematic serialized Buffer objects
+// Helper to convert Buffer-like objects to Uint8Array in browser
 const prepareForEncoding = (data: any): any => {
     
     if (typeof data === 'object' && data !== null) {
-        // Only handle serialized Buffer objects that got JSON.stringify'd
+        // Handle Buffer objects that got serialized incorrectly
         if (data.type === 'Buffer' && Array.isArray(data.data)) {
             return new Uint8Array(data.data);
         }
         
-        // Leave actual Buffer and Uint8Array instances alone - CBOR lib handles them
+        // Handle Buffer instances (this handles both Buffer and Uint8Array)
         if (data instanceof Uint8Array || (typeof Buffer !== 'undefined' && data instanceof Buffer)) {
-            return data;
+            return new Uint8Array(data);
         }
         
         // Handle arrays recursively
@@ -87,14 +87,18 @@ export const encode = (data: any): Uint8Array => {
     }
     
     
-    // Minimal preprocessing - only fix serialized Buffer objects
+    // Deep clone and convert all Buffers to proper byte arrays
     const convertBuffersToBytes = (obj: any): any => {
         if (obj === null || obj === undefined) {
             return obj;
         }
         
-        // Only convert serialized Buffer objects {type: "Buffer", data: [...]}
-        // Leave actual Buffer and Uint8Array instances untouched for CBOR library
+        // Handle Buffer objects (both actual Buffers and serialized ones)
+        if (obj instanceof Uint8Array || (typeof Buffer !== 'undefined' && obj instanceof Buffer)) {
+            return new Uint8Array(obj);
+        }
+        
+        // Handle serialized Buffer objects {type: "Buffer", data: [...]}
         if (typeof obj === 'object' && obj.type === 'Buffer' && Array.isArray(obj.data)) {
             return new Uint8Array(obj.data);
         }
@@ -122,7 +126,6 @@ export const encode = (data: any): Uint8Array => {
             return newObj;
         }
         
-        // Return everything else unchanged (including Buffer and Uint8Array instances)
         return obj;
     };
     
