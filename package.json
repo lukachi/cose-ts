@@ -4,7 +4,9 @@
   "description": "Typescript COSE implementation",
   "type": "module",
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "LICENSE"
   ],
   "main": "./dist/index.umd.cjs",
   "module": "./dist/index.js",
@@ -38,6 +40,9 @@
   "author": "lukachi <lukachisama@gmail.com> (https://github.com/lukachi)",
   "license": "MIT",
   "release-it": {
+    "hooks": {
+      "before:init": "pnpm build"
+    },
     "git": {
       "commitMessage": "chore: release ${version}",
       "tagName": "v${version}",
