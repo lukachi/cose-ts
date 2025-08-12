@@ -1,3 +1,4 @@
+import { Buffer } from 'buffer'
 // Browser-compatible CBOR utilities
 
 let cborLib: any;
