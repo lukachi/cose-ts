@@ -382,6 +382,8 @@ export function create(headers: COSEHeaders, payload: Buffer, recipients: COSERe
           encodedP = encode(pMap);
         }
         const encrypted = [encodedP, uMap, ciphertext];
+        console.log('encrypted')
+        console.log(encrypted)
         resolve(encode(options.excludetag ? encrypted : cborUtils.createTag(Encrypt0Tag, encrypted)));
       }
     } catch (error) {
