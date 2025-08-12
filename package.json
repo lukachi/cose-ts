@@ -48,13 +48,6 @@
     },
     "github": {
       "release": true
-    },
-    "plugins": {
-      "@release-it/conventional-changelog": {
-        "preset": {
-          "name": "angular"
-        }
-      }
     }
   },
   "scripts": {
@@ -88,7 +81,6 @@
     "vite": "^7.0.4",
     "vite-plugin-node-polyfills": "^0.24.0",
     "vitest": "^3.2.4",
-    "@release-it/conventional-changelog": "^9.0.2",
     "release-it": "^17.10.0"
   },
   "engines": {
