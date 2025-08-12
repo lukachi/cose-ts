@@ -1,6 +1,6 @@
-import { Buffer } from 'buffer'
-// Browser-compatible CBOR utilities
+import { Buffer } from 'buffer';
 
+// Browser-compatible CBOR utilities using cbor2 exclusively
 let cborLib: any;
 let isNode = false;
 let isBrowser = false;
@@ -12,33 +12,29 @@ if (typeof window !== 'undefined') {
     isNode = true;
 }
 
-// Try to import the best available CBOR library
-try {
-    if (isBrowser) {
-        // For browser, prefer cbor2 or cbor
-        try {
-            cborLib = require('cbor2');
-        } catch (e) {
-            try {
-                cborLib = require('cbor');
-            } catch (e2) {
-                console.warn('No CBOR library found for browser environment');
-            }
-        }
-    } else {
-        // For Node.js, use cbor
-        try {
-            cborLib = require('cbor');
-        } catch (e) {
-            try {
-                cborLib = require('cbor2');
-            } catch (e2) {
-                console.warn('No CBOR library found for Node.js environment');
-            }
-        }
+// Function to get cbor2 library with lazy loading
+function getCborLib(): any {
+    if (cborLib) {
+        return cborLib;
     }
-} catch (e) {
-    console.error('Failed to load CBOR library:', e);
+    
+    try {
+        // Try to dynamically require cbor2
+        // This works with bundlers like Metro, Webpack, etc.
+        const cbor2Module = require('cbor2');
+        
+        // Handle different module formats
+        cborLib = cbor2Module.default || cbor2Module;
+        
+        // Verify that Tag class is available (cbor2 uses Tag, not Tagged)
+        if (!cborLib.Tag) {
+            throw new Error('cbor2 Tag class is not available in the loaded module');
+        }
+        
+        return cborLib;
+    } catch (e) {
+        throw new Error('cbor2 library is required but not available. Please install cbor2 as a peer dependency.');
+    }
 }
 
 // Helper to convert Buffer-like objects to Uint8Array in browser
@@ -83,12 +79,9 @@ const prepareForEncoding = (data: any): any => {
 };
 
 export const encode = (data: any): Uint8Array => {
-    if (!cborLib) {
-        throw new Error('No CBOR library available');
-    }
+    const cbor = getCborLib();
     
-    
-    // Deep clone and convert all Buffers to proper byte arrays
+    // Deep clone and convert all Buffers to proper byte arrays for cbor2
     const convertBuffersToBytes = (obj: any): any => {
         if (obj === null || obj === undefined) {
             return obj;
@@ -132,150 +125,135 @@ export const encode = (data: any): Uint8Array => {
     
     const processedData = convertBuffersToBytes(data);
     
-    let result: any;
-    
     try {
-        // Different libraries have different APIs
-        if (cborLib.encode) {
-            result = cborLib.encode(processedData);
-        } else {
-            throw new Error('CBOR library does not have encode method');
+        // cbor2 uses encode method
+        const result = cbor.encode(processedData);
+        
+        // cbor2 returns Uint8Array, ensure we always return Uint8Array
+        if (result instanceof Uint8Array) {
+            return result;
         }
+        
+        if (result instanceof ArrayBuffer) {
+            return new Uint8Array(result);
+        }
+        
+        if (typeof Buffer !== 'undefined' && result instanceof Buffer) {
+            return new Uint8Array(result);
+        }
+        
+        if (Array.isArray(result)) {
+            return new Uint8Array(result);
+        }
+        
+        throw new Error('Unexpected cbor2 encode result type: ' + typeof result);
     } catch (e) {
-        console.error('CBOR encode failed:', e);
+        console.error('cbor2 encode failed:', e);
         throw e;
     }
-    
-    
-    // Ensure we always return Uint8Array
-    if (result instanceof Uint8Array) {
-        return result;
-    }
-    
-    if (result instanceof ArrayBuffer) {
-        return new Uint8Array(result);
-    }
-    
-    if (typeof Buffer !== 'undefined' && result instanceof Buffer) {
-        return new Uint8Array(result);
-    }
-    
-    if (Array.isArray(result)) {
-        return new Uint8Array(result);
-    }
-    
-    if (typeof result === 'string') {
-        // Assume hex string
-        const bytes = [];
-        for (let i = 0; i < result.length; i += 2) {
-            bytes.push(parseInt(result.substr(i, 2), 16));
-        }
-        return new Uint8Array(bytes);
-    }
-    
-    // Fallback: try to convert to bytes
-    if (result && typeof result === 'object') {
-        try {
-            return new Uint8Array(Object.values(result));
-        } catch (e) {
-            console.error('Failed to convert result to Uint8Array:', e);
-            throw new Error('Cannot convert CBOR encode result to Uint8Array');
-        }
-    }
-    
-    throw new Error('Unexpected CBOR encode result type: ' + typeof result);
 };
 
-export const decode = <T = any>(data: Uint8Array | Buffer | ArrayBuffer | number[]): T => {
-    if (!cborLib) {
-        throw new Error('No CBOR library available');
-    }
+export const decode = <T = any>(data: Uint8Array | Buffer | ArrayBuffer | number[] | any): T => {
+    const cbor = getCborLib();
     
+    // Convert input to Uint8Array format that cbor2 expects
+    let input: Uint8Array;
     
-    // Convert to format the library expects
-    let input: any = data;
-    
-    if (data instanceof Buffer) {
+    // Handle different input types more robustly
+    if (data instanceof Uint8Array) {
+        input = data;
+    } else if (typeof Buffer !== 'undefined' && data instanceof Buffer) {
         input = new Uint8Array(data);
     } else if (data instanceof ArrayBuffer) {
         input = new Uint8Array(data);
     } else if (Array.isArray(data)) {
         input = new Uint8Array(data);
+    } else if (data && typeof data === 'object' && 'data' in data && Array.isArray((data as any).data)) {
+        // Handle serialized Buffer objects {type: "Buffer", data: [...]}
+        input = new Uint8Array((data as any).data);
+    } else if (data && typeof data === 'object' && typeof (data as any).length === 'number') {
+        // Handle array-like objects
+        const arrayData = Array.from(data as any).filter((item: any) => typeof item === 'number');
+        input = new Uint8Array(arrayData);
+    } else {
+        throw new Error('Unsupported input type for cbor2 decode: ' + typeof data + ', constructor: ' + ((data as any)?.constructor?.name || 'unknown'));
     }
     
-    
     try {
-        let result: T;
-        
-        if (cborLib.decode) {
-            result = cborLib.decode(input);
-        } else {
-            throw new Error('CBOR library does not have decode method');
-        }
-        
+        // cbor2 uses decode method
+        const result: T = cbor.decode(input);
         return result;
     } catch (e) {
-        console.error('CBOR decode failed:', e);
+        console.error('cbor2 decode failed:', e);
         throw e;
     }
 };
 
 // Tagged value helper
 export const createTag = (tag: number, value: any) => {
+    const cbor = getCborLib();
     
     // Prepare value for proper encoding
     const preparedValue = prepareForEncoding(value);
     
-    if (cborLib.Tagged) {
-        return new cborLib.Tagged(tag, preparedValue);
+    // cbor2 uses Tag class (not Tagged)
+    if (cbor.Tag) {
+        return new cbor.Tag(tag, preparedValue);
     }
     
-    if (cborLib.Tag) {
-        return new cborLib.Tag(tag, preparedValue);
-    }
-    
-    // Fallback for libraries without Tag support
-    console.warn('CBOR library does not support Tagged values, using fallback');
-    return { tag, value: preparedValue };
+    // Fallback for unexpected cases
+    throw new Error('cbor2 Tag class is not available');
 };
 
 export const isTagged = (obj: any): boolean => {
     if (!obj) return false;
     
-    if (cborLib.Tagged && obj instanceof cborLib.Tagged) {
+    const cbor = getCborLib();
+    
+    // cbor2 uses Tag class (not Tagged)
+    if (cbor.Tag && obj instanceof cbor.Tag) {
         return true;
     }
     
-    if (cborLib.Tag && obj instanceof cborLib.Tag) {
-        return true;
-    }
-    
-    // Fallback check
-    return typeof obj === 'object' && 'tag' in obj && 'value' in obj;
+    // Fallback check for plain objects with tag/value or tag/contents structure
+    return typeof obj === 'object' && 'tag' in obj && ('value' in obj || 'contents' in obj);
 };
 
 export const getTagNumber = (obj: any): number => {
-    if (cborLib.Tagged && obj instanceof cborLib.Tagged) {
+    const cbor = getCborLib();
+    
+    // cbor2 uses Tag class (not Tagged)
+    if (cbor.Tag && obj instanceof cbor.Tag) {
         return obj.tag;
     }
     
-    if (cborLib.Tag && obj instanceof cborLib.Tag) {
+    // Fallback for plain objects
+    if (typeof obj === 'object' && 'tag' in obj) {
         return obj.tag;
     }
     
-    return obj.tag;
+    throw new Error('Object is not a valid tagged value');
 };
 
 export const getTagValue = (obj: any): any => {
-    if (cborLib.Tagged && obj instanceof cborLib.Tagged) {
-        return obj.value;
+    const cbor = getCborLib();
+    
+    // cbor2 uses Tag class with 'contents' property (not 'value')
+    if (cbor.Tag && obj instanceof cbor.Tag) {
+        return obj.contents;
     }
     
-    if (cborLib.Tag && obj instanceof cborLib.Tag) {
-        return obj.contents || obj.value;
+    // Fallback for plain objects - check both 'value' and 'contents'
+    if (typeof obj === 'object') {
+        if ('contents' in obj) {
+            return obj.contents;
+        }
+        if ('value' in obj) {
+            return obj.value;
+        }
     }
     
-    return obj.value;
+    throw new Error('Object is not a valid tagged value');
 };
 
 // Environment info
@@ -286,6 +264,6 @@ export const getEnvironmentInfo = () => {
         hasBuffer: typeof Buffer !== 'undefined',
         hasWindow: typeof window !== 'undefined',
         hasProcess: typeof process !== 'undefined',
-        cborLibrary: cborLib?.constructor?.name || 'unknown'
+        cborLibrary: 'cbor2'
     };
 };

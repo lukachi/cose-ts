@@ -177,11 +177,12 @@ export async function read(data: Buffer, key: Buffer, externalAAD?: Buffer, opti
 
   let type = options.defaultType ? options.defaultType : MAC0Tag;
   if (cborUtils.isTagged(obj)) {
-    if (obj.tag !== MAC0Tag && obj.tag !== MACTag) {
-      throw new Error('Unexpected cbor tag, \'' + obj.tag + '\'');
+    const tagNumber = cborUtils.getTagNumber(obj);
+    if (tagNumber !== MAC0Tag && tagNumber !== MACTag) {
+      throw new Error('Unexpected cbor tag, \'' + tagNumber + '\'');
     }
-    type = Number(obj.tag);
-    obj = obj.value;
+    type = Number(tagNumber);
+    obj = cborUtils.getTagValue(obj);
   }
 
   if (!Array.isArray(obj)) {
