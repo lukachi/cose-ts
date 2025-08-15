@@ -1,6 +1,6 @@
 {
   "name": "@lukachi/cose-ts",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "description": "Typescript COSE implementation",
   "type": "module",
   "files": [
