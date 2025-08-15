@@ -381,14 +381,7 @@ export function create(headers: COSEHeaders, payload: Buffer, signers: COSESigne
       encodedP = encode(pMap);
     }
     const signed = [encodedP, uMap, payload, sig];
-    console.log('signed')
-    console.log(
-      signed,
-      encodedP instanceof Uint8Array,
-      uMap instanceof Map,
-      payload instanceof Uint8Array,
-      sig instanceof Uint8Array
-    );
+
     return Promise.resolve(encode(options.excludetag ? signed : cborUtils.createTag(Sign1Tag, signed)));
   }
 }
