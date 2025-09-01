@@ -1,5 +1,3 @@
-import { useState } from 'react'
-
 export interface TestResult {
   type: 'success' | 'error' | 'info'
   message: string
