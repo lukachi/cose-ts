@@ -86,9 +86,9 @@ export const EMPTY_BUFFER = Buffer.alloc(0);
 export function TranslateHeaders(header: { [key: string]: any }): Map<number, any> {
   const result = new Map<number, any>();
   for (const param in header) {
-    if (!HeaderParameters[param]) {
-      throw new Error('Unknown parameter, \'' + param + '\'');
-    }
+    // if (!HeaderParameters[param]) {
+    //   throw new Error('Unknown parameter, \'' + param + '\'');
+    // }
     let value = header[param];
     if (Translators[param]) {
       value = Translators[param](header[param]);
