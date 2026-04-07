@@ -23,7 +23,7 @@ export default defineConfig({
     sourcemap: true,
     lib: {
       entry: resolve(__dirname, 'src/index.ts'),
-      name: 'blockstream-sdk',
+      name: '@lukachi/cose-ts',
       // the proper extensions will be added
       fileName: 'index',
     },
