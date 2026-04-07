@@ -94,7 +94,7 @@ export function TranslateHeaders(header: { [key: string]: any }): Map<number, an
       value = Translators[param](header[param]);
     }
     if (value !== undefined && value !== null) {
-      result.set(HeaderParameters[param], value);
+      result.set(HeaderParameters[param] ?? Number(param), value);
     }
   }
   return result;
